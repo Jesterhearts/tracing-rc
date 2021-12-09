@@ -4,6 +4,7 @@ use std::{
         RefCell,
     },
     mem::ManuallyDrop,
+    num::NonZeroUsize,
     ops::Deref,
     ptr::NonNull,
 };
@@ -34,7 +35,7 @@ pub trait Traceable {
     /// # Safety
     /// - You MUST NOT report GcPtrs owned by the inner contents of GcPtrs.
     /// ```
-    /// use tlua::vm::runtime::{
+    /// use tracing_rc::{
     ///     GcPtr,
     ///     GcVisitor,
     ///     Traceable,
@@ -56,7 +57,7 @@ pub trait Traceable {
     /// ```
     /// - You MUST NOT report a unique GcPtr instance twice.
     /// ```
-    /// use tlua::vm::runtime::{
+    /// use tracing_rc::{
     ///     GcPtr,
     ///     GcVisitor,
     ///     Traceable,
@@ -76,12 +77,10 @@ pub trait Traceable {
     ///     }
     /// }
     /// ```
-    /// - You MUST NOT report GcPtrs that are not owned by your object or its
-    ///   decendents.
-    ///     - It is acceptable skip reporting, although doing so will result in
-    ///       memory leaks.
+    /// - You MUST NOT report GcPtrs that are not owned by your object or its decendents.
+    ///     - It is acceptable skip reporting, although doing so will result in memory leaks.
     /// ```
-    /// use tlua::vm::runtime::{
+    /// use tracing_rc::{
     ///     GcPtr,
     ///     GcVisitor,
     ///     Traceable,
@@ -175,8 +174,8 @@ fn reverse_collection() -> bool {
 enum Status {
     Live,
     RecentlyDecremented,
-    MaybeDead,
     Dead,
+    Zombie,
 }
 
 thread_local! { static OLD_GEN: RefCell<IndexSet<NonNull<Inner<dyn Traceable>>>> = RefCell::new(IndexSet::default()) }
@@ -217,7 +216,7 @@ pub fn collect() {
 pub fn collect_with_options(kind: CollectionType) {
     collect_new_gen(kind);
     if kind != CollectionType::YoungOnly {
-        collect_old_gen();
+        unsafe { collect_old_gen() };
     }
 }
 
@@ -227,14 +226,13 @@ fn collect_new_gen(kind: CollectionType) {
         YOUNG_GEN.with(|gen| {
             gen.borrow_mut().retain(|ptr, generation| {
                 unsafe {
-                    debug_assert_ne!(ptr.as_ref().strong_count(), 0);
-                    debug_assert_ne!(ptr.as_ref().status.get(), Status::Dead);
+                    assert_ne!(ptr.as_ref().strong_count(), 0);
+                    assert_ne!(ptr.as_ref().status.get(), Status::Dead);
 
                     if ptr.as_ref().strong_count() == 1 {
                         // This generation is the last remaining owner of the pointer, so we can
-                        // safely drop it.
-                        // It's not possible from safe code for another reference to this pointer to
-                        // be generated during drop.
+                        // safely drop it. It's not possible from safe code for another reference to
+                        // this pointer to be generated during drop.
                         Inner::drop_data_dealloc(*ptr);
                         return false;
                     }
@@ -257,185 +255,215 @@ fn collect_new_gen(kind: CollectionType) {
     });
 }
 
-fn collect_old_gen() {
-    unsafe {
-        let mut traced_nodes = OLD_GEN.with(|old_gen| {
-            let mut old_gen = old_gen.borrow_mut();
+unsafe fn trace_children(
+    ptr: NonNull<Inner<dyn Traceable>>,
+    traced_nodes: &mut IndexMap<NonNull<Inner<dyn Traceable>>, NonZeroUsize>,
+) {
+    ptr.as_ref().data.visit_children(&mut |node| {
+        let ptr = node.inner_ptr;
+        match traced_nodes.entry(ptr) {
+            indexmap::map::Entry::Occupied(mut known) => {
+                // We've already seen this node. We do a saturating add because it's ok to
+                // undercount references here and usize::max references is kind of a degenerate
+                // case.
+                *known.get_mut() = NonZeroUsize::new_unchecked(known.get().get().saturating_add(1));
+            }
+            indexmap::map::Entry::Vacant(new) => {
+                // Visiting the children of this pointer may cause a
+                // reference to it to be dropped, so we must increment the
+                // strong count here.
+                ptr.as_ref().increment_strong_count();
 
-            let mut traced_nodes = old_gen
-                .iter()
-                .map(|ptr| {
-                    (
-                        *ptr,
-                        // -1 because we don't want to count the old-gen reference.
-                        ptr.as_ref().strong_count() - 1,
-                    )
-                })
-                .collect::<IndexMap<_, _>>();
+                // We haven't yet visited this pointer, add it to the list
+                // of seen pointers. We set the initial refcount to 2 here
+                // because we've seen it once and we know our traced nodes
+                // set contains it with one strong ref.
+                new.insert(NonZeroUsize::new_unchecked(2));
 
-            // Iterate over all nodes reachable from the old gen tracking them in the list
-            // of all visited nodes.
-            for ptr in old_gen.drain(..) {
-                // The old gen is no longer keeping it alive, so decrement the strong count.
-                ptr.as_ref().decrement_strong_count();
-
-                // The pointer is still alive, but may be part of a reference
-                // cycle - mark it
                 match ptr.as_ref().status.get() {
-                    Status::Live => {
-                        // We'll collect it later if it's dead
-                        // We don't really have any work to do here otherwise.
+                    Status::Live | Status::RecentlyDecremented => {
+                        trace_children(ptr, traced_nodes);
                     }
-                    Status::MaybeDead => {
-                        // We already marked this node as possibly dead, no need
-                        // to reprocess it.
-                        // If it turns out to be part of a cycle, we'll drop its
-                        // parent and then this will be reached
-                        // & dropped.
+                    Status::Zombie => {
+                        // This is reachable if a previously dead node was
+                        // resurrected during a drop and stored as a child
+                        // of a cycle. Its inner data is dropped, so we
+                        // can't touch it.
                     }
                     Status::Dead => {
-                        // This should be unreachable. The only way for nodes to reach the old gen
-                        // is through the GcPtr drop implementation, which is a no-op if the node is
-                        // dead.
-                        debug_assert_ne!(ptr.as_ref().status.get(), Status::Dead);
-                    }
-                    Status::RecentlyDecremented => {
-                        // This node had a strong ref dropped recently and might form a cycle, trace
-                        // it.
-                        unsafe fn visit_node(
-                            ptr: NonNull<Inner<dyn Traceable>>,
-                            traced_nodes: &mut IndexMap<NonNull<Inner<dyn Traceable>>, usize>,
-                        ) {
-                            ptr.as_ref().mark_maybe_dead();
-
-                            ptr.as_ref().data.visit_children(&mut |node| {
-                                let ptr = node.inner_ptr;
-                                match traced_nodes.entry(ptr) {
-                                    indexmap::map::Entry::Occupied(mut known) => {
-                                        *known.get_mut() -= 1;
-                                    }
-                                    indexmap::map::Entry::Vacant(new) => {
-                                        new.insert(ptr.as_ref().strong_count() - 1);
-                                    }
-                                }
-
-                                match ptr.as_ref().status.get() {
-                                    Status::Live | Status::RecentlyDecremented => {
-                                        visit_node(ptr, traced_nodes);
-                                    }
-                                    Status::MaybeDead => {
-                                        // Already marked
-                                    }
-                                    Status::Dead => {
-                                        // This is reachable if a previously
-                                        // dead node was resurrected during a
-                                        // drop and stored as a child of a
-                                        // cycle.
-                                        // Its inner data is dropped, so we
-                                        // can't touch it.
-                                    }
-                                }
-                            });
-                        }
-
-                        visit_node(ptr, &mut traced_nodes);
+                        panic!(
+                            "Dead node {:#?} @ {:?} in reachable object graph",
+                            ptr.as_ref(),
+                            ptr
+                        );
                     }
                 }
             }
-
-            traced_nodes
-        });
-
-        // Before we begin marking the list of possibly dead nodes, we need to remove
-        // any already dead nodes, as it would cause undefined behavior to resurrect
-        // them through mark_live or attempt to drop their inner data a second
-        // time.
-        traced_nodes.retain(|ptr, _| ptr.as_ref().status.get() != Status::Dead);
-
-        for ptr in traced_nodes.keys() {
-            unsafe fn mark_live(inner: &Inner<dyn Traceable>) {
-                inner.mark_live();
-
-                inner.data.visit_children(&mut |node| {
-                    let node = unsafe { node.inner_ptr.as_ref() };
-                    debug_assert!(node.strong_count() > 0);
-
-                    match node.status.get() {
-                        Status::Live => {
-                            // Already visited & marked live.
-                        }
-                        Status::MaybeDead => {
-                            // The node wasn't actually dead, mark it live.
-                            mark_live(node);
-                        }
-                        Status::Dead => {
-                            // The node is part of a cycle and would be dead if the live root that's
-                            // holding onto it were to die, but it's not actually dead.
-                            // Resurrect it.
-                            mark_live(node);
-                        }
-                        Status::RecentlyDecremented => {
-                            // This is probably not undefined behavior, but it's probably
-                            // not good.
-                            debug_assert!(false, "Unvisited node in garbage tree.");
-                        }
-                    }
-                });
-            }
-
-            unsafe fn mark(
-                ptr: NonNull<Inner<dyn Traceable>>,
-                traced_nodes: &IndexMap<NonNull<Inner<dyn Traceable>>, usize>,
-            ) {
-                if ptr.as_ref().status.get() != Status::MaybeDead {
-                    return;
-                }
-
-                if traced_nodes[&ptr] > 0 {
-                    // There is at least one non-cyclical ref, mark the node & all decendents as
-                    // live
-                    mark_live(ptr.as_ref())
-                } else {
-                    ptr.as_ref().mark_dead();
-
-                    // The node was part of a cycle, we can handle cleanup at a later stage.
-                    // For now we need to visit its children because even a dead cycle may have
-                    // outward bound edges to non-dead nodes and we need to mark them as live if so.
-                    ptr.as_ref()
-                        .data
-                        .visit_children(&mut |node| mark(node.inner_ptr, traced_nodes));
-                }
-            }
-
-            mark(*ptr, &traced_nodes);
         }
+    });
+}
 
-        traced_nodes.retain(|ptr, refs| {
-            if ptr.as_ref().status.get() != Status::Dead {
-                return false;
+unsafe fn mark_live(
+    inner: &Inner<dyn Traceable>,
+    traced_nodes: &mut IndexMap<NonNull<Inner<dyn Traceable>>, NonZeroUsize>,
+) {
+    inner.force_live();
+
+    inner.data.visit_children(&mut |node| {
+        traced_nodes.remove(&node.inner_ptr);
+
+        let node = node.inner_ptr.as_ref();
+
+        match node.status.get() {
+            Status::Live => {
+                // Already visited & marked live.
             }
-
-            debug_assert_eq!(*refs, 0);
-            ptr.as_ref().strong.set(0);
-            true
-        });
-
-        if reverse_collection() {
-            traced_nodes.reverse();
+            Status::Zombie => {
+                // The node has been previously torn down, we can't really resurrect it
+                // here or we cause undefined behavior depending on the constraints of the inner
+                // type. Thankfully Zombie nodes cannot cause cycles (or if they do,
+                // there's no way to clean them up).
+            }
+            Status::Dead => {
+                // The node is part of a cycle and would be dead if the live root that's
+                // holding onto it were to die, but it's not actually dead.
+                // Resurrect it.
+                mark_live(node, traced_nodes);
+            }
+            Status::RecentlyDecremented => {
+                // The node was given to the collector because we thought it might be
+                // dead, but it's not, yay!
+                mark_live(node, traced_nodes);
+            }
         }
+    });
+}
 
-        // Drop the dead node data
-        for (ptr, _) in traced_nodes.iter() {
-            debug_assert_eq!(ptr.as_ref().status.get(), Status::Dead);
+unsafe fn mark(
+    ptr: NonNull<Inner<dyn Traceable>>,
+    traced_nodes: &mut IndexMap<NonNull<Inner<dyn Traceable>>, NonZeroUsize>,
+) {
+    let refs = if let Some(refs) = traced_nodes.remove(&ptr) {
+        // We visited this node durring tracing and need to possibly mark it as dead.
+        refs.get()
+    } else {
+        // We have either already marked this node as dead or live or it is a brand new node
+        // created during tracing.
+        //
+        // If we already marked it dead, it'll need to be resurrected by a reachable live node. If
+        // it was created during tracing it's either already in our dead graph and will get cleaned
+        // up normally, or there's a real reference outside that can reach it and we'll clean it
+        // up later. Or it's leaked, but there's only so much we can do here.
+        return;
+    };
+
+    if ptr.as_ref().strong_count() > refs {
+        // There is at least one non-cyclical ref, mark the node & all decendents as
+        // live
+        mark_live(ptr.as_ref(), traced_nodes);
+    } else if ptr.as_ref().is_live() {
+        // The node hasn't been marked dead yet and is not a zombie, so we need to mark
+        // it dead. Remember that we can't visit the children of
+        // zombie nodes.
+        ptr.as_ref().mark_dead();
+
+        // The node was part of a cycle, we can handle cleanup at a later stage.
+        // For now we need to visit its children because even a dead cycle may have
+        // outward bound edges to non-dead nodes and we need to mark them as live if so.
+        ptr.as_ref().data.visit_children(&mut |node| {
+            mark(node.inner_ptr, traced_nodes);
+        });
+    }
+}
+
+unsafe fn collect_old_gen() {
+    let mut candidate_nodes = OLD_GEN.with(|old_gen| {
+        let mut old_gen = old_gen.borrow_mut();
+
+        old_gen
+            .drain(..)
+            .collect::<IndexSet<NonNull<Inner<dyn Traceable>>>>()
+    });
+
+    let mut traced_nodes = candidate_nodes
+        .iter()
+        .map(|ptr| {
+            (
+                *ptr,
+                // initially 1, since all items in the collector get a strong reference
+                NonZeroUsize::new_unchecked(1),
+            )
+        })
+        .collect();
+
+    // Iterate over all nodes reachable from the old gen tracking them in the list of all
+    // traced nodes.
+    for ptr in candidate_nodes.iter() {
+        match ptr.as_ref().status.get() {
+            Status::Live | Status::Zombie => {
+                // We'll collect it later if it a new strong reference was created and added
+                // to a now dead cycle before being collected. We don't really have any work
+                // to do here otherwise.
+            }
+            Status::Dead => {
+                // This should be unreachable. The only way for nodes to reach the old gen
+                // is through the GcPtr drop implementation, which does not add nodes to the
+                // collector if they are dead.
+                panic!("Dead node {:#?} @ {:?} in old gen", ptr.as_ref(), ptr);
+            }
+            Status::RecentlyDecremented => {
+                // This node had a strong ref dropped recently and might form a cycle, trace
+                // it
+                trace_children(*ptr, &mut traced_nodes);
+            }
+        }
+    }
+
+    candidate_nodes.extend(traced_nodes.keys().copied());
+
+    for ptr in candidate_nodes.iter() {
+        mark(*ptr, &mut traced_nodes);
+    }
+
+    if reverse_collection() {
+        candidate_nodes.reverse();
+    }
+
+    // Drop the dead node data. Because the drop implementations may run arbitrary code, it is
+    // possible that zombie nodes will get created post-drop.
+    candidate_nodes.retain(|ptr| {
+        // At this point, nodes in our candidate list marked dead are _definitely dead_, so we can
+        // go ahead and drop them. During drop, new refs might get added to dead nodes, so we will
+        // pass back over the list we dropped and double-check their refcounts before actually
+        // de-allocating them.
+        if ptr.as_ref().status.get() == Status::Dead {
             Inner::drop_data(*ptr);
+            true
+        } else {
+            // Remember that when we added a new node to our old generation or our traced list, we
+            // bumped the refcount to keep it alive. We must decrement the strong count here to
+            // prevent a leak.
+            ptr.as_ref().decrement_strong_count();
+            false
         }
+    });
 
-        // De-allocate the dropped nodes. The refcount must be checked here as someone
-        // may have stashed a copy during drop
-        for (ptr, _) in traced_nodes.into_iter() {
-            if ptr.as_ref().strong_count() == 0 {
-                Inner::dealloc(ptr);
-            }
+    // De-allocate the dropped nodes. The refcount must be checked here as someone
+    // may have stashed a copy during drop.
+    for ptr in candidate_nodes.into_iter() {
+        debug_assert_eq!(ptr.as_ref().status.get(), Status::Dead);
+
+        // Remember that when we added nodes to our traced list, we bumped the refcount to keep
+        // them alive.
+        ptr.as_ref().decrement_strong_count();
+
+        // If the strong count is 0, candidate_nodes was the last owner of the data and we can
+        // safely de-allocate its memory.
+        if ptr.as_ref().strong_count() == 0 {
+            Inner::dealloc(ptr);
+        } else {
+            // Please don't do necromancy
+            ptr.as_ref().mark_zombie();
         }
     }
 }
@@ -496,20 +524,39 @@ where
         self.strong.set(self.strong.get() - 1)
     }
 
-    fn mark_live(&self) {
+    fn is_live(&self) -> bool {
+        matches!(
+            self.status.get(),
+            Status::Live | Status::RecentlyDecremented
+        )
+    }
+
+    /// # Safety: The inner data must not have been dropped or the node must be unreachable through
+    /// safe code.
+    unsafe fn force_live(&self) {
         self.status.set(Status::Live);
     }
 
-    fn mark_dead(&self) {
-        self.status.set(Status::Dead);
+    fn mark_live(&self) {
+        if self.status.get() == Status::RecentlyDecremented {
+            self.status.set(Status::Live);
+        }
     }
 
-    fn mark_maybe_dead(&self) {
-        self.status.set(Status::MaybeDead);
+    fn mark_dead(&self) {
+        if self.status.get() != Status::Zombie {
+            self.status.set(Status::Dead);
+        }
+    }
+
+    fn mark_zombie(&self) {
+        self.status.set(Status::Zombie);
     }
 
     fn mark_ref_dropped(&self) {
-        self.status.set(Status::RecentlyDecremented);
+        if self.status.get() == Status::Live {
+            self.status.set(Status::RecentlyDecremented);
+        }
     }
 }
 
@@ -540,7 +587,7 @@ where
     /// pointer is possibly cleaned up.
     pub fn get(&self) -> Option<&T> {
         unsafe {
-            if self.ptr.as_ref().status.get() != Status::Dead {
+            if self.ptr.as_ref().is_live() {
                 Some(self.as_ref())
             } else {
                 None
@@ -606,10 +653,13 @@ where
     fn clone(&self) -> Self {
         unsafe {
             let inner = self.ptr.as_ref();
-            if inner.status.get() != Status::Dead {
-                // Please don't do necromancy.
+
+            // Technically mark_live is safe to call without this check, but it's going to get
+            // inlined anyways and this makes things a little more explicit.
+            if inner.is_live() {
                 inner.mark_live();
             }
+
             inner.increment_strong_count();
 
             Self { ptr: self.ptr }
@@ -634,7 +684,7 @@ where
 
     fn deref(&self) -> &Self::Target {
         unsafe {
-            assert_ne!(self.ptr.as_ref().status.get(), Status::Dead);
+            assert!(self.ptr.as_ref().is_live());
             &self.ptr.as_ref().data
         }
     }
@@ -643,23 +693,37 @@ where
 impl<T: Traceable + 'static> Drop for GcPtr<T> {
     fn drop(&mut self) {
         unsafe {
+            self.ptr.as_ref().decrement_strong_count();
+
             if self.ptr.as_ref().status.get() == Status::Dead {
                 // The collector already knows about this and will handle dropping its internal
                 // data & deallocating anything needed.
                 return;
             }
 
-            self.ptr.as_ref().decrement_strong_count();
-
             if self.ptr.as_ref().strong_count() == 0 {
                 // This has dropped to zero refs and is not stored in the collector. We can
                 // safely drop the inner value and de-allocate the container.
 
-                debug_assert_eq!(self.ptr.as_ref().status.get(), Status::Live);
-                Inner::drop_data_dealloc(self.ptr);
+                if self.ptr.as_ref().status.get() == Status::Zombie {
+                    // The collector is the only code which marks node as zombies, and it does so
+                    // _after_ it has finished processing the node. We can safely de-allocate here
+                    // without causing a double free.
+                    //
+                    // Note that we _must not_ attempt to drop the data, since it was already
+                    // dropped when the node was marked dead.
+                    Inner::dealloc(self.ptr)
+                } else {
+                    debug_assert_eq!(self.ptr.as_ref().status.get(), Status::Live);
+
+                    // We know the node is alive and hasn't had its inner data dropped yet, so we
+                    // can safely drop & deallocate the data.
+                    Inner::drop_data_dealloc(self.ptr);
+                }
             } else {
                 // Indicate that it might be the root of a cycle.
                 self.ptr.as_ref().mark_ref_dropped();
+
                 // Convert it to an unsized generic type
                 let ptr = self.coerce_inner();
 
@@ -1209,8 +1273,6 @@ mod test {
             impl Drop for Necro {
                 fn drop(&mut self) {
                     ZOMBIE.with(|zombie| {
-                        // This will cause mancer to be irrecoverably leaked, but will not result in
-                        // undefined behavior.
                         *zombie.borrow_mut() = Some(GcPtr::new(Zombie {
                             cycle: RefCell::new(None),
                             dead: RefCell::new(Some(self.gc.borrow().as_ref().unwrap().clone())),
@@ -1221,7 +1283,6 @@ mod test {
 
             impl Traceable for Necro {
                 unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
-                    eprintln!("visit");
                     visitor(self.gc.borrow().as_ref().unwrap().node());
                 }
             }
