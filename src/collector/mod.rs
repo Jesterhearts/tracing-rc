@@ -196,6 +196,8 @@ unsafe fn mark_live(
     inner.force_live();
 
     inner.data.visit_children(&mut |node| {
+        // We don't want to visit this node when checking for dead nodes later, so we make sure to
+        // remove it from the list of traced nodes.
         traced_nodes.remove(&node.inner_ptr);
 
         let node = node.inner_ptr.as_ref();

@@ -57,8 +57,9 @@ where
 {
     /// # Safety:
     /// - ptr.data must not have been dropped.
-    unsafe fn drop_data(ptr: NonNull<Self>) {
-        std::ptr::drop_in_place(std::ptr::addr_of_mut!((*ptr.as_ptr()).data));
+    /// - ptr must not have any aliasing references.
+    unsafe fn drop_data(mut ptr: NonNull<Self>) {
+        ManuallyDrop::drop(&mut ptr.as_mut().data)
     }
 
     /// # Safety:

@@ -118,7 +118,7 @@ empty_traceable!(std::string::String);
 
 impl<T: Traceable> Traceable for std::cell::RefCell<T> {
     unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
-        self.borrow().visit_children(visitor);
+        T::visit_children(&self.borrow(), visitor);
     }
 }
 
