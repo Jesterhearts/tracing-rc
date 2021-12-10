@@ -30,14 +30,15 @@ fn main() {
         }));
         let node_b = GcPtr::new(RefCell::new(GraphNode {
             data: 11,
-            edge: Some(node_a.clone()),
+            edge: None,
         }));
         let node_c = GcPtr::new(RefCell::new(GraphNode {
             data: 12,
-            edge: Some(node_b),
+            edge: Some(node_a.clone()),
         }));
 
-        node_a.borrow_mut().edge = Some(node_c);
+        node_a.borrow_mut().edge = Some(node_b.clone());
+        node_b.borrow_mut().edge = Some(node_c);
 
         let a = node_a.borrow();
         let b = a.edge.as_ref().unwrap().borrow();
@@ -67,7 +68,7 @@ cause undefined behavior in any of the scenarios outlined. In order to accomplis
 collector does the following:
 1. Items that are waiting for collection or have been visited during tracing are given an extra
    strong reference to make sure the memory remains allocated and the data it contains remains valid
-   even if pointers are dropped during traversal.
+   even if strong references are dropped during traversal.
 2. Reference counts for traced items are not decremented by the collector during traversal (this is
    a difference from e.g. Bacon-Rajan which originally inspired this crate). The collector instead
    keeps a count of the number of times it reached each pointer through tracing, and then compares

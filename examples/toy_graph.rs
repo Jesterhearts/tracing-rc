@@ -25,14 +25,15 @@ fn main() {
         }));
         let node_b = GcPtr::new(RefCell::new(GraphNode {
             data: 11,
-            edge: Some(node_a.clone()),
+            edge: None,
         }));
         let node_c = GcPtr::new(RefCell::new(GraphNode {
             data: 12,
-            edge: Some(node_b),
+            edge: Some(node_a.clone()),
         }));
 
-        node_a.borrow_mut().edge = Some(node_c);
+        node_a.borrow_mut().edge = Some(node_b.clone());
+        node_b.borrow_mut().edge = Some(node_c);
 
         let a = node_a.borrow();
         let b = a.edge.as_ref().unwrap().borrow();
