@@ -56,8 +56,8 @@ fn main() {
 ```
 
 # Soundness & Rc Collector Design Considerations
-Because any implementation of the `Traceable` trait and custom `Drop` implementations of objects
-owned by a garbage collected pointer can run arbitrary code, it may attempt to create new copies or
+Because any implementation of the `Traceable` trait and custom `Drop` implementations for objects
+owned by a garbage collected pointer can run arbitrary code, they may attempt to create new copies or
 drop existing traced objects (even already traced ones) in the middle of collection. In addition,
 due to bugs in client code, `Traceable` may report more items as children than it actually owns
 (reporting fewer is trivially safe, as it will simply leak).
