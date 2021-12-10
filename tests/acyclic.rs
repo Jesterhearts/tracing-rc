@@ -1,7 +1,9 @@
 use tracing_rc::{
     collect_with_options,
-    collector::count_roots,
-    CollectionType,
+    collector::{
+        count_roots,
+        CollectOptions,
+    },
     GcPtr,
     GcVisitor,
     Traceable,
@@ -70,7 +72,7 @@ fn acyclic_tree_young_gen_collects() {
 
     assert_eq!(count_roots(), 1, "Acyclic node c added to root list");
 
-    collect_with_options(CollectionType::YoungOnly);
+    collect_with_options(CollectOptions::YOUNG_ONLY);
 
     assert_eq!(count_roots(), 0, "Failed to cleanup node a");
 }

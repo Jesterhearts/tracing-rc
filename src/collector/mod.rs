@@ -28,8 +28,8 @@ pub struct GcVisitor<'cycle> {
 }
 
 impl GcVisitor<'_> {
-    pub fn visit_node<T: Traceable>(&mut self, root: &GcPtr<T>) {
-        (self.visitor)(root.node());
+    pub fn visit_node<T: Traceable>(&mut self, node: &GcPtr<T>) {
+        (self.visitor)(node.node());
     }
 }
 
@@ -40,11 +40,9 @@ pub enum CollectionType {
     /// and moving old pointers to the old gen. Then perform a cycle-tracing
     /// collection over the old gen.
     Default,
-    /// Only run collection for the young gen and ignore the old gen completely.
+    /// Only run collection for the young gen. This may still move pointers to the old gen if they
+    /// qualify based on CollectOptions::old_gen_threshold
     YoungOnly,
-    /// Move all pointers from young gen to old gen and perform a full
-    /// cycle-tracing collection.
-    Full,
 }
 
 impl Default for CollectionType {
@@ -53,7 +51,52 @@ impl Default for CollectionType {
     }
 }
 
-const OLD_GEN_THRESHOLD: usize = 10;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CollectOptions {
+    /// The number of times a pointer may be seen in the young gen before moving it to the old
+    /// gen for a full tracing collection. Setting this to zero will cause all pointers to move to
+    /// the old gen if they cannot be immediately cleaned up.
+    pub old_gen_threshold: usize,
+    pub kind: CollectionType,
+}
+
+impl CollectOptions {
+    pub const DEFAULT: CollectOptions = CollectOptions {
+        old_gen_threshold: 5,
+        kind: CollectionType::Default,
+    };
+    pub const YOUNG_ONLY: CollectOptions = Self::DEFAULT.set_kind(CollectionType::YoungOnly);
+
+    pub const fn set_kind(self, kind: CollectionType) -> Self {
+        let Self {
+            old_gen_threshold,
+            kind: _,
+        } = self;
+
+        Self {
+            old_gen_threshold,
+            kind,
+        }
+    }
+
+    pub const fn set_old_gen_threshold(self, threshold: usize) -> Self {
+        let Self {
+            old_gen_threshold: _,
+            kind,
+        } = self;
+
+        Self {
+            old_gen_threshold: threshold,
+            kind,
+        }
+    }
+}
+
+impl Default for CollectOptions {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
 
 #[cfg(debug_assertions)]
 thread_local! { static REVERSE_COLLECTION: Cell<bool> = Cell::new(true) }
@@ -99,23 +142,26 @@ pub fn visit_all_roots(visitor: &mut dyn FnMut(Node)) {
 
 /// Perform a full, cycle-tracing collection of both the old & young gen.
 pub fn collect_full() {
-    collect_with_options(CollectionType::Full)
+    collect_with_options(CollectOptions {
+        old_gen_threshold: 0,
+        kind: CollectionType::Default,
+    })
 }
 
 /// Perform a normal collection cycle.
 pub fn collect() {
-    collect_with_options(CollectionType::default())
+    collect_with_options(CollectOptions::default())
 }
 
-/// Perform a collection cycle based on `kind`.
-pub fn collect_with_options(kind: CollectionType) {
-    collect_new_gen(kind);
-    if kind != CollectionType::YoungOnly {
+/// Perform a collection cycle based on `CollectionOptions`.
+pub fn collect_with_options(options: CollectOptions) {
+    collect_new_gen(options);
+    if options.kind != CollectionType::YoungOnly {
         unsafe { collect_old_gen() };
     }
 }
 
-fn collect_new_gen(kind: CollectionType) {
+fn collect_new_gen(options: CollectOptions) {
     OLD_GEN.with(|old_gen| {
         let mut old_gen = old_gen.borrow_mut();
         YOUNG_GEN.with(|gen| {
@@ -133,16 +179,11 @@ fn collect_new_gen(kind: CollectionType) {
                     }
                 }
 
-                if kind != CollectionType::Full {
+                if *generation < options.old_gen_threshold {
                     *generation += 1;
-
-                    if *generation < OLD_GEN_THRESHOLD {
-                        // Not old enough yet to bother with cycle detection.
-                        return true;
-                    }
+                    return true;
                 }
 
-                // Move it to the old gen
                 old_gen.insert(*ptr);
                 false
             })
