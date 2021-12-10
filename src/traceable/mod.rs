@@ -6,13 +6,20 @@ use crate::GcVisitor;
 /// recommended that you store them in a GcPtr, as there is still a real
 /// cost to doing so. You're probably better off using std::rc.
 pub trait Traceable {
-    /// Visit the gc pointers owned by this type or its decendents.
+    /// Visit the gc pointers owned by this type.
     ///
-    /// This function is marked unsafe as improper implementation can lead to
+    /// It is recommended that you simply call visit_children(visitor) on each value owned by the
+    /// implementor which may participate in a reference cycle. The default implementation for
+    /// `GcPtr` will appropriately notify the collector when it is visited. You may also pass your
+    /// struct's owned `GcPtr` values directly to the visitor.
+    ///
+    /// Impromper implementation of this trait will not cause undefined behavior, however, if you
+    /// fail to report a value you may leak memory and if you report a value you don't own (or
+    /// report a value more than once), you may cause the collector to clean it up prematurely.
+    /// Attemting to access a value which has been cleaned up will cause a panic, but will not cause
     /// undefined behavior.
     ///
-    /// # Safety
-    /// - You MUST NOT report GcPtrs owned by the inner contents of GcPtrs.
+    /// - You should not report GcPtrs owned by the inner contents of GcPtrs.
     /// ```
     /// use tracing_rc::{
     ///     GcPtr,
@@ -22,19 +29,22 @@ pub trait Traceable {
     ///
     /// struct MyStruct {
     ///     ptr: GcPtr<MyStruct>,
+    ///     other_ptr: GcPtr<MyStruct>,
     /// }
     ///
     /// impl Traceable for MyStruct {
-    ///     unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    ///     fn visit_children(&self, visitor: &mut GcVisitor) {
     ///         // This is normal and ok.
-    ///         visitor(self.ptr.node());
+    ///         visitor.visit_node(&self.ptr);
+    ///         // This is also acceptable
+    ///         self.other_ptr.visit_children(visitor);
     ///
-    ///         // This is bad and will cause undefined behavior
-    ///         // visitor(self.ptr.ptr.node());
+    ///         // This will not cause undefined behavior, but it is wrong and may cause panics.
+    ///         self.ptr.ptr.visit_children(visitor);
     ///     }
     /// }
     /// ```
-    /// - You MUST NOT report a unique GcPtr instance twice.
+    /// - You should not report a unique GcPtr instance twice.
     /// ```
     /// use tracing_rc::{
     ///     GcPtr,
@@ -47,16 +57,16 @@ pub trait Traceable {
     /// }
     ///
     /// impl Traceable for MyStruct {
-    ///     unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    ///     fn visit_children(&self, visitor: &mut GcVisitor) {
     ///         // This is normal and ok.
-    ///         visitor(self.ptr.node());
+    ///         visitor.visit_node(&self.ptr);
     ///
-    ///         // This is bad and will cause undefined behavior
-    ///         // visitor(self.ptr.node());
+    ///         // This is wrong and may cause panics.
+    ///         visitor.visit_node(&self.ptr);
     ///     }
     /// }
     /// ```
-    /// - You MUST NOT report GcPtrs that are not owned by your object or its decendents.
+    /// - You should not report GcPtrs that are not owned by your object.
     ///     - It is acceptable skip reporting, although doing so will result in memory leaks.
     /// ```
     /// use tracing_rc::{
@@ -73,35 +83,31 @@ pub trait Traceable {
     /// }
     ///
     /// impl Traceable for MyStruct {
-    ///     unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    ///     fn visit_children(&self, visitor: &mut GcVisitor) {
     ///         // This is normal and ok.
-    ///         visitor(self.ptr.node());
+    ///         visitor.visit_node(&self.ptr);
     ///
     ///         // Leaving this line commented out will leak, which is safe.
     ///         // Uncommenting it is safe and will allow leaks to be cleaned up.
     ///         // visitor(self.leaks.node());
     ///
-    ///         // This is bad and will cause undefined behavior
-    ///         // GLOBAL_PTR.with(|ptr| visitor(ptr.node()));
+    ///         // This is wrong and will cause GLOBAL_PTR to be cleaned up. If anything tries to
+    ///         // access GLOBAL_PTR without checking if it is still alive, a panic will occur.
+    ///         GLOBAL_PTR.with(|ptr| visitor.visit_node(ptr));
     ///     }
     /// }
     /// ```
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor);
+    fn visit_children(&self, visitor: &mut GcVisitor);
 }
 
-/// This is safe to use, as it does not visit any children and thust cannot
-/// cause a pointer to be dropped erroneously. It will cause memory leaks if it
-/// is used to implement tracing on a type which ends up participating in a
-/// cycle.
-///
-/// Despite its safety, you probably don't want to implement this anyways, since
-/// if you know that your type cannot participate in a cycle, you should
-/// probably just use std::rc.
+/// This will cause memory leaks if it is used to implement tracing on a type which ends up
+/// participating in a cycle. You probably don't want to implement this, since if you know that
+/// your type cannot participate in a cycle, you should probably just use std::rc.
 #[macro_export]
 macro_rules!  empty_traceable {
     ($t:path) => {
         impl Traceable for $t {
-            unsafe fn visit_children(&self, _: &mut GcVisitor) {}
+            fn visit_children(&self, _: &mut GcVisitor) {}
         }
     };
     ($first:path, $($rest:path),+) => {
@@ -117,13 +123,13 @@ empty_traceable!(bool, char);
 empty_traceable!(std::string::String);
 
 impl<T: Traceable> Traceable for std::cell::RefCell<T> {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         T::visit_children(&self.borrow(), visitor);
     }
 }
 
 impl<T: Traceable> Traceable for std::option::Option<T> {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         if let Some(inner) = self {
             inner.visit_children(visitor);
         }
@@ -131,7 +137,7 @@ impl<T: Traceable> Traceable for std::option::Option<T> {
 }
 
 impl<T: Traceable> Traceable for std::vec::Vec<T> {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         for elem in self.iter() {
             elem.visit_children(visitor);
         }
@@ -139,13 +145,13 @@ impl<T: Traceable> Traceable for std::vec::Vec<T> {
 }
 
 impl<T: Traceable> Traceable for std::boxed::Box<T> {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         T::visit_children(self, visitor)
     }
 }
 
 impl<T: Traceable, const S: usize> Traceable for [T; S] {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         for elem in self.iter() {
             elem.visit_children(visitor);
         }
@@ -153,7 +159,7 @@ impl<T: Traceable, const S: usize> Traceable for [T; S] {
 }
 
 impl<T: Traceable> Traceable for [T] {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         for elem in self.iter() {
             elem.visit_children(visitor);
         }
@@ -161,7 +167,7 @@ impl<T: Traceable> Traceable for [T] {
 }
 
 impl<V: Traceable> Traceable for std::collections::BinaryHeap<V> {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         for v in self.iter() {
             v.visit_children(visitor);
         }
@@ -169,7 +175,7 @@ impl<V: Traceable> Traceable for std::collections::BinaryHeap<V> {
 }
 
 impl<K: Traceable, V: Traceable> Traceable for std::collections::BTreeMap<K, V> {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         for (k, v) in self.iter() {
             k.visit_children(visitor);
             v.visit_children(visitor);
@@ -178,7 +184,7 @@ impl<K: Traceable, V: Traceable> Traceable for std::collections::BTreeMap<K, V> 
 }
 
 impl<V: Traceable> Traceable for std::collections::BTreeSet<V> {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         for v in self.iter() {
             v.visit_children(visitor);
         }
@@ -186,7 +192,7 @@ impl<V: Traceable> Traceable for std::collections::BTreeSet<V> {
 }
 
 impl<K: Traceable, V: Traceable> Traceable for std::collections::HashMap<K, V> {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         for (k, v) in self.iter() {
             k.visit_children(visitor);
             v.visit_children(visitor);
@@ -195,7 +201,7 @@ impl<K: Traceable, V: Traceable> Traceable for std::collections::HashMap<K, V> {
 }
 
 impl<V: Traceable> Traceable for std::collections::HashSet<V> {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         for v in self.iter() {
             v.visit_children(visitor);
         }
@@ -203,7 +209,7 @@ impl<V: Traceable> Traceable for std::collections::HashSet<V> {
 }
 
 impl<V: Traceable> Traceable for std::collections::LinkedList<V> {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         for v in self.iter() {
             v.visit_children(visitor);
         }
@@ -211,7 +217,7 @@ impl<V: Traceable> Traceable for std::collections::LinkedList<V> {
 }
 
 impl<V: Traceable> Traceable for std::collections::VecDeque<V> {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         for v in self.iter() {
             v.visit_children(visitor);
         }

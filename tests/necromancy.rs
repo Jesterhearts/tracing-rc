@@ -15,7 +15,7 @@ fn pure_gc_necromancy() {
     }
 
     impl Traceable for Zombie {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.cycle.visit_children(visitor);
             self.dead.visit_children(visitor);
         }
@@ -40,8 +40,8 @@ fn pure_gc_necromancy() {
     }
 
     impl Traceable for Necro {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
-            visitor(self.gc.borrow().as_ref().unwrap().node());
+        fn visit_children(&self, visitor: &mut GcVisitor) {
+            visitor.visit_node(self.gc.borrow().as_ref().unwrap());
         }
     }
 
@@ -51,8 +51,8 @@ fn pure_gc_necromancy() {
     }
 
     impl Traceable for Mancer {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
-            visitor(self.gc.node());
+        fn visit_children(&self, visitor: &mut GcVisitor) {
+            visitor.visit_node(&self.gc);
         }
     }
 

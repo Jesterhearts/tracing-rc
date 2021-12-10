@@ -21,8 +21,8 @@ fn acyclic_chain_no_garbage() {
         i: GcPtr<u32>,
     }
     impl Traceable for Int {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
-            visitor(self.i.node())
+        fn visit_children(&self, visitor: &mut GcVisitor) {
+            visitor.visit_node(&self.i);
         }
     }
 
@@ -42,8 +42,8 @@ fn acyclic_tree_young_gen_collects() {
         i: GcPtr<u32>,
     }
     impl Traceable for Int {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
-            visitor(self.i.node())
+        fn visit_children(&self, visitor: &mut GcVisitor) {
+            visitor.visit_node(&self.i)
         }
     }
 

@@ -13,6 +13,7 @@ use indexmap::{
 };
 
 use crate::{
+    GcPtr,
     Inner,
     Traceable,
 };
@@ -22,7 +23,15 @@ pub struct Node {
     pub(crate) inner_ptr: NonNull<Inner<dyn Traceable>>,
 }
 
-pub type GcVisitor<'cycle> = dyn FnMut(Node) + 'cycle;
+pub struct GcVisitor<'cycle> {
+    visitor: &'cycle mut dyn FnMut(Node),
+}
+
+impl GcVisitor<'_> {
+    pub fn visit_node<T: Traceable>(&mut self, root: &GcPtr<T>) {
+        (self.visitor)(root.node());
+    }
+}
 
 /// Controls the style of collection carried out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,48 +154,53 @@ unsafe fn trace_children(
     ptr: NonNull<Inner<dyn Traceable>>,
     traced_nodes: &mut IndexMap<NonNull<Inner<dyn Traceable>>, NonZeroUsize>,
 ) {
-    ptr.as_ref().data.visit_children(&mut |node| {
-        let ptr = node.inner_ptr;
-        match traced_nodes.entry(ptr) {
-            indexmap::map::Entry::Occupied(mut known) => {
-                // We've already seen this node. We do a saturating add because it's ok to
-                // undercount references here and usize::max references is kind of a degenerate
-                // case.
-                *known.get_mut() = NonZeroUsize::new_unchecked(known.get().get().saturating_add(1));
-            }
-            indexmap::map::Entry::Vacant(new) => {
-                // Visiting the children of this pointer may cause a
-                // reference to it to be dropped, so we must increment the
-                // strong count here.
-                ptr.as_ref().increment_strong_count();
+    let mut visitor = GcVisitor {
+        visitor: &mut |node| {
+            let ptr = node.inner_ptr;
+            match traced_nodes.entry(ptr) {
+                indexmap::map::Entry::Occupied(mut known) => {
+                    // We've already seen this node. We do a saturating add because it's ok to
+                    // undercount references here and usize::max references is kind of a degenerate
+                    // case.
+                    *known.get_mut() =
+                        NonZeroUsize::new_unchecked(known.get().get().saturating_add(1));
+                }
+                indexmap::map::Entry::Vacant(new) => {
+                    // Visiting the children of this pointer may cause a
+                    // reference to it to be dropped, so we must increment the
+                    // strong count here.
+                    ptr.as_ref().increment_strong_count();
 
-                // We haven't yet visited this pointer, add it to the list
-                // of seen pointers. We set the initial refcount to 2 here
-                // because we've seen it once and we know our traced nodes
-                // set contains it with one strong ref.
-                new.insert(NonZeroUsize::new_unchecked(2));
+                    // We haven't yet visited this pointer, add it to the list
+                    // of seen pointers. We set the initial refcount to 2 here
+                    // because we've seen it once and we know our traced nodes
+                    // set contains it with one strong ref.
+                    new.insert(NonZeroUsize::new_unchecked(2));
 
-                match ptr.as_ref().status.get() {
-                    Status::Live | Status::RecentlyDecremented => {
-                        trace_children(ptr, traced_nodes);
-                    }
-                    Status::Zombie => {
-                        // This is reachable if a previously dead node was
-                        // resurrected during a drop and stored as a child
-                        // of a cycle. Its inner data is dropped, so we
-                        // can't touch it.
-                    }
-                    Status::Dead => {
-                        panic!(
-                            "Dead node {:#?} @ {:?} in reachable object graph",
-                            ptr.as_ref(),
-                            ptr
-                        );
+                    match ptr.as_ref().status.get() {
+                        Status::Live | Status::RecentlyDecremented => {
+                            trace_children(ptr, traced_nodes);
+                        }
+                        Status::Zombie => {
+                            // This is reachable if a previously dead node was
+                            // resurrected during a drop and stored as a child
+                            // of a cycle. Its inner data is dropped, so we
+                            // can't touch it.
+                        }
+                        Status::Dead => {
+                            panic!(
+                                "Dead node {:#?} @ {:?} in reachable object graph",
+                                ptr.as_ref(),
+                                ptr
+                            );
+                        }
                     }
                 }
             }
-        }
-    });
+        },
+    };
+
+    ptr.as_ref().data.visit_children(&mut visitor);
 }
 
 unsafe fn mark_live(
@@ -195,36 +209,40 @@ unsafe fn mark_live(
 ) {
     inner.force_live();
 
-    inner.data.visit_children(&mut |node| {
-        // We don't want to visit this node when checking for dead nodes later, so we make sure to
-        // remove it from the list of traced nodes.
-        traced_nodes.remove(&node.inner_ptr);
+    let mut visitor = GcVisitor {
+        visitor: &mut |node| {
+            // We don't want to visit this node when checking for dead nodes later, so we make sure
+            // to remove it from the list of traced nodes.
+            traced_nodes.remove(&node.inner_ptr);
 
-        let node = node.inner_ptr.as_ref();
+            let node = node.inner_ptr.as_ref();
 
-        match node.status.get() {
-            Status::Live => {
-                // Already visited & marked live.
+            match node.status.get() {
+                Status::Live => {
+                    // Already visited & marked live.
+                }
+                Status::Zombie => {
+                    // The node has been previously torn down, we can't really resurrect it
+                    // here or we cause undefined behavior depending on the constraints of the inner
+                    // type. Thankfully Zombie nodes cannot cause cycles (or if they do,
+                    // there's no way to clean them up).
+                }
+                Status::Dead => {
+                    // The node is part of a cycle and would be dead if the live root that's
+                    // holding onto it were to die, but it's not actually dead.
+                    // Resurrect it.
+                    mark_live(node, traced_nodes);
+                }
+                Status::RecentlyDecremented => {
+                    // The node was given to the collector because we thought it might be
+                    // dead, but it's not, yay!
+                    mark_live(node, traced_nodes);
+                }
             }
-            Status::Zombie => {
-                // The node has been previously torn down, we can't really resurrect it
-                // here or we cause undefined behavior depending on the constraints of the inner
-                // type. Thankfully Zombie nodes cannot cause cycles (or if they do,
-                // there's no way to clean them up).
-            }
-            Status::Dead => {
-                // The node is part of a cycle and would be dead if the live root that's
-                // holding onto it were to die, but it's not actually dead.
-                // Resurrect it.
-                mark_live(node, traced_nodes);
-            }
-            Status::RecentlyDecremented => {
-                // The node was given to the collector because we thought it might be
-                // dead, but it's not, yay!
-                mark_live(node, traced_nodes);
-            }
-        }
-    });
+        },
+    };
+
+    inner.data.visit_children(&mut visitor);
 }
 
 unsafe fn mark(
@@ -255,12 +273,16 @@ unsafe fn mark(
         // zombie nodes.
         ptr.as_ref().mark_dead();
 
+        let mut visitor = GcVisitor {
+            visitor: &mut |node| {
+                mark(node.inner_ptr, traced_nodes);
+            },
+        };
+
         // The node was part of a cycle, we can handle cleanup at a later stage.
         // For now we need to visit its children because even a dead cycle may have
         // outward bound edges to non-dead nodes and we need to mark them as live if so.
-        ptr.as_ref().data.visit_children(&mut |node| {
-            mark(node.inner_ptr, traced_nodes);
-        });
+        ptr.as_ref().data.visit_children(&mut visitor);
     }
 }
 

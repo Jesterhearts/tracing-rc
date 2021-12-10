@@ -15,7 +15,7 @@ fn mono_simple_cycle() {
     }
 
     impl Traceable for Cycle {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor)
         }
     }
@@ -45,7 +45,7 @@ fn simple_cycle() {
     }
 
     impl Traceable for Cycle {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor)
         }
     }
@@ -117,7 +117,7 @@ fn dead_cycle_live_outbound() {
     }
 
     impl Traceable for Lives {
-        unsafe fn visit_children(&self, _: &mut GcVisitor) {}
+        fn visit_children(&self, _: &mut GcVisitor) {}
     }
 
     struct Cycle {
@@ -126,7 +126,7 @@ fn dead_cycle_live_outbound() {
     }
 
     impl Traceable for Cycle {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.edge.visit_children(visitor)
         }
     }
@@ -195,7 +195,7 @@ fn dead_cycle_dead_outbound() {
     struct Dead;
 
     impl Traceable for Dead {
-        unsafe fn visit_children(&self, _: &mut GcVisitor) {}
+        fn visit_children(&self, _: &mut GcVisitor) {}
     }
 
     struct Cycle {
@@ -204,9 +204,9 @@ fn dead_cycle_dead_outbound() {
     }
 
     impl Traceable for Cycle {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
-            visitor(self.edge.node())
+            visitor.visit_node(&self.edge)
         }
     }
 
@@ -244,7 +244,7 @@ fn cycle_live_inbound() {
     }
 
     impl Traceable for Cycle {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
         }
     }
@@ -292,7 +292,7 @@ fn mono_cycle_live_inbound() {
     }
 
     impl Traceable for Cycle {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
         }
     }
@@ -338,9 +338,9 @@ fn mono_cycle_live_outbound() {
     }
 
     impl Traceable for Cycle {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
-            visitor(self.edge.node());
+            visitor.visit_node(&self.edge);
         }
     }
 

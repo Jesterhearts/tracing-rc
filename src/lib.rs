@@ -133,8 +133,8 @@ impl<T> Traceable for GcPtr<T>
 where
     T: Traceable + 'static,
 {
-    unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
-        visitor(self.node())
+    fn visit_children(&self, visitor: &mut GcVisitor) {
+        visitor.visit_node(self)
     }
 }
 
@@ -181,7 +181,7 @@ where
         &self.ptr.as_ref().data
     }
 
-    pub fn node(&self) -> Node {
+    fn node(&self) -> Node {
         unsafe {
             Node {
                 inner_ptr: self.coerce_inner(),

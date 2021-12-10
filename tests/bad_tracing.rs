@@ -16,7 +16,7 @@ fn add_value_during_trace() {
     }
 
     impl Traceable for Extra {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
             // This will be completely leaked. Note that if this happens before visit_children,
             // we'll enter an infinite loop or overflow our stack. This is still safe though, and
@@ -45,7 +45,7 @@ fn drop_cyclic_value_during_trace() {
     }
 
     impl Traceable for Extra {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
             // There should be > 1 outstanding refs to this value before this point, so it'll get
             // added to the old gen. This shouldn't cause undefined behavior though.
@@ -77,7 +77,7 @@ fn drop_acyclic_value_during_trace() {
     }
 
     impl Traceable for Extra {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
             self.acyclic.visit_children(visitor);
             // There should be > 1 outstanding refs to this value before this point,
@@ -111,7 +111,7 @@ fn retain_value_during_trace() {
     }
 
     impl Traceable for Extra {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
 
             // This value should be immortal because of this statement.
@@ -144,7 +144,7 @@ fn report_extra_values_during_trace() {
     }
 
     impl Traceable for Extra {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
             // This is clearly a bug, if the collector trusts the traceable trait, it may try to
             // free this value.
@@ -171,7 +171,7 @@ fn report_grandchild_values_during_trace() {
     }
 
     impl Traceable for Extra {
-        unsafe fn visit_children(&self, visitor: &mut GcVisitor) {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
 
             // This may be None during the mark phase of the collector, because the grandchild might
