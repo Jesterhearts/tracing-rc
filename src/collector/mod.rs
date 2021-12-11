@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    collections::VecDeque,
     num::NonZeroUsize,
     ptr::NonNull,
 };
@@ -7,6 +8,11 @@ use std::{
 use indexmap::{
     IndexMap,
     IndexSet,
+};
+use petgraph::{
+    graphmap::DiGraphMap,
+    visit::IntoNeighborsDirected,
+    EdgeDirection,
 };
 
 use crate::{
@@ -181,16 +187,11 @@ fn collect_old_gen() {
             .collect::<IndexSet<NonNull<Inner<dyn Traceable>>>>()
     });
 
-    let mut traced_nodes = candidate_nodes
-        .iter()
-        .map(|ptr| {
-            (
-                *ptr,
-                // initially 1, since all items in the collector get a strong reference
-                NonZeroUsize::new(1).unwrap(),
-            )
-        })
-        .collect();
+    let mut traced_nodes = DiGraphMap::with_capacity(candidate_nodes.len(), candidate_nodes.len());
+
+    for node in candidate_nodes.iter().cloned() {
+        traced_nodes.add_node(node);
+    }
 
     // Iterate over all nodes reachable from the old gen tracking them in the list of all
     // traced nodes.
@@ -207,13 +208,51 @@ fn collect_old_gen() {
             Status::RecentlyDecremented => {
                 // This node had a strong ref dropped recently and might form a cycle, trace
                 // it
-                trace_children(inner, &mut traced_nodes);
+                trace_children(ptr, &mut traced_nodes);
             }
         }
     }
 
+    let mut live_nodes = IndexSet::<NonNull<Inner<dyn Traceable>>>::default();
+
+    for node in traced_nodes.nodes() {
+        if unsafe { node.as_ref().strong_count() }
+            > NonZeroUsize::new(
+                traced_nodes
+                    .neighbors_directed(node, EdgeDirection::Incoming)
+                    .count()
+                    // + The strong count from the collector
+                    + 1,
+            )
+            .unwrap()
+            && live_nodes.insert(node)
+        {
+            live_nodes.extend(traced_nodes.neighbors_directed(node, EdgeDirection::Outgoing));
+        }
+    }
+
+    let mut dead_nodes = IndexSet::with_capacity(traced_nodes.node_count() - live_nodes.len());
+
+    dead_nodes.extend(
+        traced_nodes
+            .nodes()
+            .filter(|node| !live_nodes.contains(node)),
+    );
+
+    for node in live_nodes {
+        // SAFETY: We added a strong ref when we added the node either to the old gen or the
+        // traced set, and we're done with processing the node after this call.
+        // We don't drop the strong count until after we're done marking the node as live.
+        unsafe {
+            node.as_ref().mark_live();
+
+            // We need to decrement the strong ref we added when tracing to prevent leaks.
+            node.as_ref().decrement_strong_count()
+        };
+    }
+
     unsafe {
-        traced_nodes.retain(|ptr, _| {
+        dead_nodes.retain(|ptr| {
             if ptr.as_ref().status.get() != Status::Dead {
                 true
             } else {
@@ -225,9 +264,7 @@ fn collect_old_gen() {
                     // We need to decrement the strong ref we added when tracing to prevent leaks.
                     // SAFETY: We added a strong ref when we added the node either to the old gen or
                     // the traced set, and we're done with processing the node
-                    // after this call. We don't have to worry about concurrent
-                    // drops invalidating the reference while it's still
-                    // held until end of scope.
+                    // after this call.
                     ptr.as_ref().decrement_strong_count()
                 }
                 false
@@ -235,24 +272,7 @@ fn collect_old_gen() {
         });
     }
 
-    let (live_nodes, mut dead_nodes): (IndexMap<_, _>, _) = traced_nodes
-        .into_iter()
-        .partition(|(ptr, refs)| unsafe { ptr.as_ref().strong_count() > *refs });
-
-    for (live_node, _) in live_nodes {
-        let inner = unsafe { live_node.as_ref() };
-        inner.mark_live();
-        mark_children_live(inner, &mut dead_nodes);
-
-        // We need to decrement the strong ref we added when tracing to prevent leaks.
-        // SAFETY: We added a strong ref when we added the node either to the old gen or the
-        // traced set, and we're done with processing the node after this call. We don't
-        // have to worry about concurrent drops invalidating the reference while it's still
-        // held until end of scope.
-        unsafe { inner.decrement_strong_count() };
-    }
-
-    for ptr in dead_nodes.keys() {
+    for ptr in dead_nodes.iter() {
         unsafe { ptr.as_ref().mark_dead() };
     }
 
@@ -265,7 +285,7 @@ fn collect_old_gen() {
     // collector's strong reference (which might cause a drop implementation to de-allocate the
     // node in the face of bugs).
     unsafe {
-        for ptr in dead_nodes.keys() {
+        for ptr in dead_nodes.iter() {
             // At this point, nodes in our candidate list marked dead are _definitely dead_, so we
             // can go ahead and drop them. During drop, new refs might get added to dead
             // nodes, so we will pass back over the list we dropped and double-check
@@ -282,7 +302,7 @@ fn collect_old_gen() {
     unsafe {
         // De-allocate the dropped nodes. The refcount must be checked here as someone
         // may have stashed a copy during drop.
-        for (ptr, _) in dead_nodes {
+        for ptr in dead_nodes {
             // If the strong count is 1, dead_nodes is the last owner of the data and we can
             // safely de-allocate its memory.
             if ptr.as_ref().strong_count() == NonZeroUsize::new(1).unwrap() {
@@ -296,77 +316,38 @@ fn collect_old_gen() {
 }
 
 fn trace_children(
-    inner: &Inner<dyn Traceable>,
-    traced_nodes: &mut IndexMap<NonNull<Inner<dyn Traceable>>, NonZeroUsize>,
+    parent: NonNull<Inner<dyn Traceable>>,
+    traced_nodes: &mut DiGraphMap<NonNull<Inner<dyn Traceable>>, ()>,
 ) {
-    inner.data.visit_children(&mut GcVisitor {
+    let parent_inner = unsafe { parent.as_ref() };
+    parent_inner.data.visit_children(&mut GcVisitor {
         visitor: &mut |node| {
             let ptr = node.inner_ptr;
             let inner = unsafe { ptr.as_ref() };
 
-            match traced_nodes.entry(ptr) {
-                indexmap::map::Entry::Occupied(mut known) => {
-                    // We've already seen this node. We do a saturating add because it's ok to
-                    // undercount references here and usize::max references is kind of a degenerate
-                    // case.
-                    *known.get_mut() =
-                        NonZeroUsize::new(known.get().get().saturating_add(1)).unwrap();
-                }
-                indexmap::map::Entry::Vacant(new) => {
-                    // Visiting the children of this pointer may cause a
-                    // reference to it to be dropped, so we must increment the
-                    // strong count here.
-                    inner.increment_strong_count();
+            let seen_node = traced_nodes.contains_node(ptr);
+            traced_nodes.add_edge(parent, ptr, ());
 
-                    // We haven't yet visited this pointer, add it to the list
-                    // of seen pointers. We set the initial refcount to 2 here
-                    // because we've seen it once and we know our traced nodes
-                    // set contains it with one strong ref.
-                    new.insert(NonZeroUsize::new(2).unwrap());
+            if !seen_node {
+                // We haven't yet visited this pointer, add it to the list
+                // of seen pointers.
 
-                    match inner.status.get() {
-                        Status::Live | Status::RecentlyDecremented => {
-                            trace_children(inner, traced_nodes);
-                        }
-                        Status::Dead => {
-                            // This is reachable if a previously dead node was
-                            // resurrected during a drop and stored as a child
-                            // of a cycle. Its inner data is dropped, so we
-                            // can't touch it.
-                        }
+                // Visiting the children of this pointer may cause a
+                // reference to it to be dropped, so we must increment the
+                // strong count here.
+                inner.increment_strong_count();
+
+                match inner.status.get() {
+                    Status::Live | Status::RecentlyDecremented => {
+                        trace_children(ptr, traced_nodes);
+                    }
+                    Status::Dead => {
+                        // This is reachable if a previously dead node was
+                        // resurrected during a drop and stored as a child
+                        // of a cycle. Its inner data is dropped, so we
+                        // can't touch it.
                     }
                 }
-            }
-        },
-    });
-}
-
-fn mark_children_live(
-    inner: &Inner<dyn Traceable>,
-    traced_nodes: &mut IndexMap<NonNull<Inner<dyn Traceable>>, NonZeroUsize>,
-) {
-    inner.data.visit_children(&mut GcVisitor {
-        visitor: &mut |node| {
-            let inner = unsafe { node.inner_ptr.as_ref() };
-            inner.mark_live();
-
-            // We don't want to visit this node when checking for dead nodes later, so we make sure
-            // to remove it from the list of traced nodes.
-            if traced_nodes.remove(&node.inner_ptr).is_some() {
-                // The node is part of a cycle and would be dead if the live root that's
-                // holding onto it were to die, but it's not actually dead, remove its children from
-                // the list of dead nodes.
-                mark_children_live(inner, traced_nodes);
-
-                // We need to decrement the strong ref we added when tracing to prevent leaks.
-                // SAFETY: We added a strong ref when we added the node either to the old gen or the
-                // traced set, and we're done with processing the node after this call. We don't
-                // have to worry about concurrent drops invalidating the reference while it's still
-                // held until end of scope.
-                unsafe { inner.decrement_strong_count() };
-            } else {
-                // The node won't be marked dead and collected by the collector, so we don't need to
-                // do anything with it.
             }
         },
     });
