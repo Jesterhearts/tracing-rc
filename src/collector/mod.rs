@@ -202,7 +202,7 @@ fn collect_old_gen() {
                 // to a now dead cycle before being collected. We don't really have any work
                 // to do here otherwise.
                 // Dead nodes can be here if a buggy trace implementation or bad drop behavior
-                // caused a node to not to be improperly cleaned up.
+                // caused a node to be improperly cleaned up.
             }
             Status::RecentlyDecremented => {
                 // This node had a strong ref dropped recently and might form a cycle, trace
@@ -213,7 +213,6 @@ fn collect_old_gen() {
     }
 
     unsafe {
-        // Remove all zombie nodes, their
         traced_nodes.retain(|ptr, _| {
             if ptr.as_ref().status.get() != Status::Dead {
                 true
