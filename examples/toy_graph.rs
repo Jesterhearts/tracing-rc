@@ -2,13 +2,13 @@ use std::cell::RefCell;
 
 use tracing_rc::{
     collect_full,
-    GcPtr,
+    Gc,
     Traceable,
 };
 
 struct GraphNode<T: 'static> {
     data: T,
-    edge: Option<GcPtr<RefCell<GraphNode<T>>>>,
+    edge: Option<Gc<RefCell<GraphNode<T>>>>,
 }
 
 impl<T> Traceable for GraphNode<T> {
@@ -19,15 +19,15 @@ impl<T> Traceable for GraphNode<T> {
 
 fn main() {
     {
-        let node_a = GcPtr::new(RefCell::new(GraphNode {
+        let node_a = Gc::new(RefCell::new(GraphNode {
             data: 10,
             edge: None,
         }));
-        let node_b = GcPtr::new(RefCell::new(GraphNode {
+        let node_b = Gc::new(RefCell::new(GraphNode {
             data: 11,
             edge: None,
         }));
-        let node_c = GcPtr::new(RefCell::new(GraphNode {
+        let node_c = Gc::new(RefCell::new(GraphNode {
             data: 12,
             edge: Some(node_a.clone()),
         }));
@@ -43,8 +43,9 @@ fn main() {
         // all of the nodes go out of scope at this point and would normally be leaked.
     }
 
-    // In this simple example, we always have cycles our program is complete after this, so we can't
-    // take advantage of the young generation picking up acyclic pointers without tracing.
+    // In this simple example, we always have cycles and our program is complete after this,
+    // so we can't take advantage of the young generation picking up acyclic pointers without
+    // tracing.
     collect_full();
 
     // All leaked nodes have been cleaned up!

@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use tracing_rc::{
     collect_full,
-    GcPtr,
+    Gc,
     GcVisitor,
     Traceable,
 };
@@ -10,8 +10,8 @@ use tracing_rc::{
 #[test]
 fn pure_gc_necromancy() {
     struct Zombie {
-        cycle: RefCell<Option<GcPtr<Zombie>>>,
-        dead: RefCell<Option<GcPtr<Mancer>>>,
+        cycle: RefCell<Option<Gc<Zombie>>>,
+        dead: RefCell<Option<Gc<Mancer>>>,
     }
 
     impl Traceable for Zombie {
@@ -21,17 +21,17 @@ fn pure_gc_necromancy() {
         }
     }
 
-    thread_local! { static ZOMBIE: RefCell<Option<GcPtr<Zombie>>> = RefCell::new(None) };
+    thread_local! { static ZOMBIE: RefCell<Option<Gc<Zombie>>> = RefCell::new(None) };
 
     #[derive(Debug)]
     struct Necro {
-        gc: RefCell<Option<GcPtr<Mancer>>>,
+        gc: RefCell<Option<Gc<Mancer>>>,
     }
 
     impl Drop for Necro {
         fn drop(&mut self) {
             ZOMBIE.with(|zombie| {
-                *zombie.borrow_mut() = Some(GcPtr::new(Zombie {
+                *zombie.borrow_mut() = Some(Gc::new(Zombie {
                     cycle: RefCell::new(None),
                     dead: RefCell::new(Some(self.gc.borrow().as_ref().unwrap().clone())),
                 }));
@@ -47,7 +47,7 @@ fn pure_gc_necromancy() {
 
     #[derive(Debug)]
     struct Mancer {
-        gc: GcPtr<Necro>,
+        gc: Gc<Necro>,
     }
 
     impl Traceable for Mancer {
@@ -56,10 +56,10 @@ fn pure_gc_necromancy() {
         }
     }
 
-    let necro = GcPtr::new(Necro {
+    let necro = Gc::new(Necro {
         gc: RefCell::new(None),
     });
-    let mancer = GcPtr::new(Mancer { gc: necro.clone() });
+    let mancer = Gc::new(Mancer { gc: necro.clone() });
     *necro.gc.borrow_mut() = Some(mancer);
 
     drop(necro);

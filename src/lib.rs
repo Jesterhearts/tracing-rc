@@ -126,12 +126,12 @@ where
 }
 
 #[derive(Debug)]
-pub struct GcPtr<T: Traceable + 'static> {
+pub struct Gc<T: Traceable + 'static> {
     ptr: NonNull<Inner<T>>,
     _t: PhantomData<T>,
 }
 
-impl<T> Traceable for GcPtr<T>
+impl<T> Traceable for Gc<T>
 where
     T: Traceable + 'static,
 {
@@ -140,7 +140,7 @@ where
     }
 }
 
-impl<T> GcPtr<T>
+impl<T> Gc<T>
 where
     T: Traceable + 'static,
 {
@@ -174,7 +174,7 @@ where
         }
     }
 
-    /// Gets a reference into this GcPtr without checking if pointer is still
+    /// Gets a reference into this Gc without checking if pointer is still
     /// alive.
     ///
     /// # Safety
@@ -197,7 +197,7 @@ where
     }
 }
 
-impl<T: Traceable + 'static> PartialEq for GcPtr<T>
+impl<T: Traceable + 'static> PartialEq for Gc<T>
 where
     T: PartialEq,
 {
@@ -206,9 +206,9 @@ where
     }
 }
 
-impl<T: Traceable + 'static> Eq for GcPtr<T> where T: Eq {}
+impl<T: Traceable + 'static> Eq for Gc<T> where T: Eq {}
 
-impl<T: Traceable + 'static> PartialOrd for GcPtr<T>
+impl<T: Traceable + 'static> PartialOrd for Gc<T>
 where
     T: PartialOrd,
 {
@@ -217,7 +217,7 @@ where
     }
 }
 
-impl<T: Traceable + 'static> Ord for GcPtr<T>
+impl<T: Traceable + 'static> Ord for Gc<T>
 where
     T: Ord,
 {
@@ -226,7 +226,7 @@ where
     }
 }
 
-impl<T> Clone for GcPtr<T>
+impl<T> Clone for Gc<T>
 where
     T: Traceable + 'static,
 {
@@ -248,7 +248,7 @@ where
     }
 }
 
-impl<T> AsRef<T> for GcPtr<T>
+impl<T> AsRef<T> for Gc<T>
 where
     T: Traceable + 'static,
 {
@@ -257,7 +257,7 @@ where
     }
 }
 
-impl<T> Deref for GcPtr<T>
+impl<T> Deref for Gc<T>
 where
     T: Traceable + 'static,
 {
@@ -271,7 +271,7 @@ where
     }
 }
 
-impl<T: Traceable + 'static> Drop for GcPtr<T> {
+impl<T: Traceable + 'static> Drop for Gc<T> {
     fn drop(&mut self) {
         unsafe {
             if self.ptr.as_ref().strong_count() == NonZeroUsize::new(1).unwrap() {

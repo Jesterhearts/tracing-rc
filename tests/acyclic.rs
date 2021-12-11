@@ -4,14 +4,14 @@ use tracing_rc::{
         count_roots,
         CollectOptions,
     },
-    GcPtr,
+    Gc,
     GcVisitor,
     Traceable,
 };
 
 #[test]
 fn acyclic_single_no_garbage() {
-    let a = GcPtr::new(10);
+    let a = Gc::new(10);
 
     drop(a);
     assert_eq!(count_roots(), 0);
@@ -20,7 +20,7 @@ fn acyclic_single_no_garbage() {
 #[test]
 fn acyclic_chain_no_garbage() {
     struct Int {
-        i: GcPtr<u32>,
+        i: Gc<u32>,
     }
     impl Traceable for Int {
         fn visit_children(&self, visitor: &mut GcVisitor) {
@@ -28,7 +28,7 @@ fn acyclic_chain_no_garbage() {
         }
     }
 
-    let a = GcPtr::new(Int { i: GcPtr::new(10) });
+    let a = Gc::new(Int { i: Gc::new(10) });
 
     drop(a);
     assert_eq!(
@@ -41,7 +41,7 @@ fn acyclic_chain_no_garbage() {
 #[test]
 fn acyclic_tree_young_gen_collects() {
     struct Int {
-        i: GcPtr<u32>,
+        i: Gc<u32>,
     }
     impl Traceable for Int {
         fn visit_children(&self, visitor: &mut GcVisitor) {
@@ -49,9 +49,9 @@ fn acyclic_tree_young_gen_collects() {
         }
     }
 
-    let a = GcPtr::new(10u32);
-    let b = GcPtr::new(Int { i: a.clone() });
-    let c = GcPtr::new(Int { i: a.clone() });
+    let a = Gc::new(10u32);
+    let b = Gc::new(Int { i: a.clone() });
+    let c = Gc::new(Int { i: a.clone() });
 
     drop(a);
 

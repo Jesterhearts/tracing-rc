@@ -10,7 +10,7 @@ use indexmap::{
 };
 
 use crate::{
-    GcPtr,
+    Gc,
     Inner,
     Traceable,
 };
@@ -25,7 +25,7 @@ pub struct GcVisitor<'cycle> {
 }
 
 impl GcVisitor<'_> {
-    pub fn visit_node<T: Traceable>(&mut self, node: &GcPtr<T>) {
+    pub fn visit_node<T: Traceable>(&mut self, node: &Gc<T>) {
         (self.visitor)(node.node());
     }
 }
@@ -260,7 +260,7 @@ fn collect_old_gen() {
     // We've removed all nodes reachable from still-live nodes, and we've removed all zombie nodes.
     // If we've made a mistake or a broken Traceable implementation has misreported its owned nodes,
     // we'll be marking the node dead prior to dropping to make the data inaccessible. Safe code
-    // will not be able to see dropped inner values and any destructors for GcPtrs will not attempt
+    // will not be able to see dropped inner values and any destructors for Gcs will not attempt
     // to drop _or deallocate_ the node itself. We also do not deallocate or remove our
     // collector's strong reference (which might cause a drop implementation to de-allocate the
     // node in the face of bugs).

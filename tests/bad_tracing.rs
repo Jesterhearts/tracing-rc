@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use tracing_rc::{
     collect_full,
-    GcPtr,
+    Gc,
     GcVisitor,
     Traceable,
 };
@@ -11,8 +11,8 @@ use tracing_rc::{
 fn add_value_during_trace() {
     #[derive(Debug)]
     struct Extra {
-        gc: RefCell<Option<GcPtr<Extra>>>,
-        added: RefCell<Option<GcPtr<Extra>>>,
+        gc: RefCell<Option<Gc<Extra>>>,
+        added: RefCell<Option<Gc<Extra>>>,
     }
 
     impl Traceable for Extra {
@@ -25,7 +25,7 @@ fn add_value_during_trace() {
         }
     }
 
-    let first = GcPtr::new(Extra {
+    let first = Gc::new(Extra {
         gc: RefCell::new(None),
         added: RefCell::new(None),
     });
@@ -41,7 +41,7 @@ fn add_value_during_trace() {
 fn drop_cyclic_value_during_trace() {
     #[derive(Debug)]
     struct Extra {
-        gc: RefCell<Option<GcPtr<Extra>>>,
+        gc: RefCell<Option<Gc<Extra>>>,
     }
 
     impl Traceable for Extra {
@@ -53,7 +53,7 @@ fn drop_cyclic_value_during_trace() {
         }
     }
 
-    let first = GcPtr::new(Extra {
+    let first = Gc::new(Extra {
         gc: RefCell::new(None),
     });
 
@@ -72,8 +72,8 @@ fn drop_cyclic_value_during_trace() {
 fn drop_acyclic_value_during_trace() {
     #[derive(Debug)]
     struct Extra {
-        gc: RefCell<Option<GcPtr<Extra>>>,
-        acyclic: RefCell<Option<GcPtr<usize>>>,
+        gc: RefCell<Option<Gc<Extra>>>,
+        acyclic: RefCell<Option<Gc<usize>>>,
     }
 
     impl Traceable for Extra {
@@ -88,9 +88,9 @@ fn drop_acyclic_value_during_trace() {
         }
     }
 
-    let first = GcPtr::new(Extra {
+    let first = Gc::new(Extra {
         gc: RefCell::new(None),
-        acyclic: RefCell::new(Some(GcPtr::new(10))),
+        acyclic: RefCell::new(Some(Gc::new(10))),
     });
 
     *first.gc.borrow_mut() = Some(first.clone());
@@ -103,11 +103,11 @@ fn drop_acyclic_value_during_trace() {
 
 #[test]
 fn retain_value_during_trace() {
-    thread_local! { static SMUGGLE: RefCell<Option<GcPtr<Extra>>> = RefCell::new(None) };
+    thread_local! { static SMUGGLE: RefCell<Option<Gc<Extra>>> = RefCell::new(None) };
 
     #[derive(Debug)]
     struct Extra {
-        gc: RefCell<Option<GcPtr<Extra>>>,
+        gc: RefCell<Option<Gc<Extra>>>,
     }
 
     impl Traceable for Extra {
@@ -119,7 +119,7 @@ fn retain_value_during_trace() {
         }
     }
 
-    let first = GcPtr::new(Extra {
+    let first = Gc::new(Extra {
         gc: RefCell::new(None),
     });
 
@@ -140,7 +140,7 @@ fn retain_value_during_trace() {
 fn report_extra_values_during_trace() {
     #[derive(Debug)]
     struct Extra {
-        gc: RefCell<Option<GcPtr<Extra>>>,
+        gc: RefCell<Option<Gc<Extra>>>,
     }
 
     impl Traceable for Extra {
@@ -152,7 +152,7 @@ fn report_extra_values_during_trace() {
         }
     }
 
-    let first = GcPtr::new(Extra {
+    let first = Gc::new(Extra {
         gc: RefCell::new(None),
     });
 
@@ -167,7 +167,7 @@ fn report_extra_values_during_trace() {
 fn report_grandchild_values_during_trace() {
     #[derive(Debug)]
     struct Extra {
-        gc: RefCell<Option<GcPtr<Extra>>>,
+        gc: RefCell<Option<Gc<Extra>>>,
     }
 
     impl Traceable for Extra {
@@ -182,11 +182,11 @@ fn report_grandchild_values_during_trace() {
         }
     }
 
-    let first = GcPtr::new(Extra {
+    let first = Gc::new(Extra {
         gc: RefCell::new(None),
     });
 
-    let second = GcPtr::new(Extra {
+    let second = Gc::new(Extra {
         gc: RefCell::new(Some(first.clone())),
     });
 

@@ -7,13 +7,13 @@ use std::cell::RefCell;
 
 use tracing_rc::{
     collect_full,
-    GcPtr,
+    Gc,
     Traceable,
 };
 
 struct GraphNode<T: 'static> {
     data: T,
-    edge: Option<GcPtr<RefCell<GraphNode<T>>>>,
+    edge: Option<Gc<RefCell<GraphNode<T>>>>,
 }
 
 impl<T> Traceable for GraphNode<T> {
@@ -24,15 +24,15 @@ impl<T> Traceable for GraphNode<T> {
 
 fn main() {
     {
-        let node_a = GcPtr::new(RefCell::new(GraphNode {
+        let node_a = Gc::new(RefCell::new(GraphNode {
             data: 10,
             edge: None,
         }));
-        let node_b = GcPtr::new(RefCell::new(GraphNode {
+        let node_b = Gc::new(RefCell::new(GraphNode {
             data: 11,
             edge: None,
         }));
-        let node_c = GcPtr::new(RefCell::new(GraphNode {
+        let node_c = Gc::new(RefCell::new(GraphNode {
             data: 12,
             edge: Some(node_a.clone()),
         }));
@@ -48,8 +48,9 @@ fn main() {
         // all of the nodes go out of scope at this point and would normally be leaked.
     }
 
-    // In this simple example, we always have cycles our program is complete after this, so we can't
-    // take advantage of the young generation picking up acyclic pointers without tracing.
+    // In this simple example, we always have cycles and our program is complete after this,
+    // so we can't take advantage of the young generation picking up acyclic pointers without
+    // tracing.
     collect_full();
 
     // All leaked nodes have been cleaned up!
@@ -75,22 +76,22 @@ collector does the following:
    that count against the strong count for each pointer it traced to decide if the item is dead.
 3. Before dropping any values, the collector marks the object dead. During this process, bugs in the
    `Traceable` implementation may cause the collector to believe a dead value is still alive
-   (causing a leak) or a live value is dead (making it inaccessible, but leaving the GC pointer
+   (causing a leak) or a live value is dead (making it inaccessible, but leaving the gc pointer
    valid). Safe code is unable to access dead values (it will panic or return Option::None), and
    cannot restore the live state of a dead object. The collector itself only restores the live state
    for objects that it marked dead during the current collection cycle, and it only does so prior to
    performing any drops.
 4. After the full set of traced objects has been marked, the collector begins dropping the inner
    data of objects it believes to be dead. This drop _does not_ and _can not_ free the memory for
-   the GC pointer, nor does it make the reference count or liveness inaccessible.
+   the gc pointer, nor does it make the reference count or liveness inaccessible.
 5. After it has completed dropping of the inner data of dead values, the collector re-examines the
-   list of dead values and checks their reference counts. Because GC pointers always decrement their
+   list of dead values and checks their reference counts. Because gc pointers always decrement their
    refcount during drop, if the cycle was correctly cleaned up, the only remaining reference count
    will be the strong ref added by the collector itself. If the collector sees this, it knows that
-   there is no way for safe code to still access the GC pointer and it can safely de-allocate it.
+   there is no way for safe code to still access the gc pointer and it can safely de-allocate it.
    
    If the number of references has _not_ dropped to zero, the collector leaves the node marked
-   `Dead`, indicating that its inner data has already been dropped, but that the GC pointer itself
+   `Dead`, indicating that its inner data has already been dropped, but that the gc pointer itself
    may still be reachable from safe code. Safe code is prevented from getting a reference to the
    data stored in a zombie pointer. When a zombie value's refcount reaches zero it is automatically
    de-allocated, as it is impossible for it to participate in any cycles once its inner data has

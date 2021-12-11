@@ -1,17 +1,17 @@
 use crate::GcVisitor;
 
-/// Must be implemented for any value which will be stored inside of a GcPtr.
+/// Must be implemented for any value which will be stored inside of a Gc.
 ///
 /// While this is implemented for many of Rust's basic types, it's not
-/// recommended that you store them in a GcPtr, as there is still a real
+/// recommended that you store them in a Gc, as there is still a real
 /// cost to doing so. You're probably better off using std::rc.
 pub trait Traceable {
     /// Visit the gc pointers owned by this type.
     ///
     /// It is recommended that you simply call visit_children(visitor) on each value owned by the
     /// implementor which may participate in a reference cycle. The default implementation for
-    /// `GcPtr` will appropriately notify the collector when it is visited. You may also pass your
-    /// struct's owned `GcPtr` values directly to the visitor.
+    /// `Gc` will appropriately notify the collector when it is visited. You may also pass your
+    /// struct's owned `Gc` values directly to the visitor.
     ///
     /// Impromper implementation of this trait will not cause undefined behavior, however, if you
     /// fail to report a value you may leak memory and if you report a value you don't own (or
@@ -19,17 +19,17 @@ pub trait Traceable {
     /// Attemting to access a value which has been cleaned up will cause a panic, but will not cause
     /// undefined behavior.
     ///
-    /// - You should not report GcPtrs owned by the inner contents of GcPtrs.
+    /// - You should not report Gcs owned by the inner contents of Gcs.
     /// ```
     /// use tracing_rc::{
-    ///     GcPtr,
+    ///     Gc,
     ///     GcVisitor,
     ///     Traceable,
     /// };
     ///
     /// struct MyStruct {
-    ///     ptr: GcPtr<MyStruct>,
-    ///     other_ptr: GcPtr<MyStruct>,
+    ///     ptr: Gc<MyStruct>,
+    ///     other_ptr: Gc<MyStruct>,
     /// }
     ///
     /// impl Traceable for MyStruct {
@@ -44,16 +44,16 @@ pub trait Traceable {
     ///     }
     /// }
     /// ```
-    /// - You should not report a unique GcPtr instance twice.
+    /// - You should not report a unique Gc instance twice.
     /// ```
     /// use tracing_rc::{
-    ///     GcPtr,
+    ///     Gc,
     ///     GcVisitor,
     ///     Traceable,
     /// };
     ///
     /// struct MyStruct {
-    ///     ptr: GcPtr<usize>,
+    ///     ptr: Gc<usize>,
     /// }
     ///
     /// impl Traceable for MyStruct {
@@ -66,20 +66,20 @@ pub trait Traceable {
     ///     }
     /// }
     /// ```
-    /// - You should not report GcPtrs that are not owned by your object.
+    /// - You should not report Gcs that are not owned by your object.
     ///     - It is acceptable skip reporting, although doing so will result in memory leaks.
     /// ```
     /// use tracing_rc::{
-    ///     GcPtr,
+    ///     Gc,
     ///     GcVisitor,
     ///     Traceable,
     /// };
     ///
-    /// thread_local! { static GLOBAL_PTR: GcPtr<usize> = GcPtr::new(10)}
+    /// thread_local! { static GLOBAL_PTR: Gc<usize> = Gc::new(10)}
     ///
     /// struct MyStruct {
-    ///     ptr: GcPtr<MyStruct>,
-    ///     leaks: GcPtr<usize>,
+    ///     ptr: Gc<MyStruct>,
+    ///     leaks: Gc<usize>,
     /// }
     ///
     /// impl Traceable for MyStruct {

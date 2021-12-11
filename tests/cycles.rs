@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use tracing_rc::{
     collect_full,
     collector::count_roots,
-    GcPtr,
+    Gc,
     GcVisitor,
     Traceable,
 };
@@ -11,7 +11,7 @@ use tracing_rc::{
 #[test]
 fn mono_simple_cycle() {
     struct Cycle {
-        gc: Option<GcPtr<RefCell<Cycle>>>,
+        gc: Option<Gc<RefCell<Cycle>>>,
     }
 
     impl Traceable for Cycle {
@@ -20,11 +20,11 @@ fn mono_simple_cycle() {
         }
     }
 
-    let a = GcPtr::new(RefCell::new(Cycle { gc: None }));
+    let a = Gc::new(RefCell::new(Cycle { gc: None }));
     a.borrow_mut().gc = Some(a.clone());
 
     assert_eq!(
-        GcPtr::strong_count(&a),
+        Gc::strong_count(&a),
         2,
         "Node a strong count not incremented"
     );
@@ -41,7 +41,7 @@ fn mono_simple_cycle() {
 #[test]
 fn simple_cycle() {
     struct Cycle {
-        gc: Option<GcPtr<RefCell<Cycle>>>,
+        gc: Option<Gc<RefCell<Cycle>>>,
     }
 
     impl Traceable for Cycle {
@@ -52,11 +52,11 @@ fn simple_cycle() {
 
     // A.ptr -> Null
     // A ref 1
-    let a = GcPtr::new(RefCell::new(Cycle { gc: None }));
+    let a = Gc::new(RefCell::new(Cycle { gc: None }));
 
     // B.ptr -> A
     // B ref 1, A ref 2
-    let b = GcPtr::new(RefCell::new(Cycle {
+    let b = Gc::new(RefCell::new(Cycle {
         gc: Some(a.clone()),
     }));
 
@@ -65,13 +65,13 @@ fn simple_cycle() {
     a.borrow_mut().gc = Some(b.clone());
 
     assert_eq!(
-        GcPtr::strong_count(&a),
+        Gc::strong_count(&a),
         2,
         "Node a strong count not incremented"
     );
 
     assert_eq!(
-        GcPtr::strong_count(&b),
+        Gc::strong_count(&b),
         2,
         "Node b strong count not incremented"
     );
@@ -81,13 +81,13 @@ fn simple_cycle() {
     assert_eq!(count_roots(), 1, "Node b not tracked in roots");
 
     assert_eq!(
-        GcPtr::strong_count(&a),
+        Gc::strong_count(&a),
         2,
         "Node a strong count decremented by drop of child"
     );
 
     assert_eq!(
-        GcPtr::strong_count(a.borrow().gc.as_ref().unwrap()),
+        Gc::strong_count(a.borrow().gc.as_ref().unwrap()),
         2,
         "Node b strong count not properly handled after drop"
     );
@@ -121,8 +121,8 @@ fn dead_cycle_live_outbound() {
     }
 
     struct Cycle {
-        gc: Option<GcPtr<RefCell<Cycle>>>,
-        edge: GcPtr<Lives>,
+        gc: Option<Gc<RefCell<Cycle>>>,
+        edge: Gc<Lives>,
     }
 
     impl Traceable for Cycle {
@@ -132,18 +132,18 @@ fn dead_cycle_live_outbound() {
         }
     }
 
-    let lives = GcPtr::new(Lives);
+    let lives = Gc::new(Lives);
 
     // A.ptr -> Null
     // A ref 1, Lives ref 2
-    let a = GcPtr::new(RefCell::new(Cycle {
+    let a = Gc::new(RefCell::new(Cycle {
         gc: None,
         edge: lives.clone(),
     }));
 
     // B.ptr -> A
     // B ref 1, A ref 2, Lives ref 3
-    let b = GcPtr::new(RefCell::new(Cycle {
+    let b = Gc::new(RefCell::new(Cycle {
         gc: Some(a.clone()),
         edge: lives.clone(),
     }));
@@ -152,17 +152,13 @@ fn dead_cycle_live_outbound() {
     // B ref 2, A ref 2, Lives ref 3
     a.borrow_mut().gc = Some(b.clone());
 
-    assert_eq!(
-        GcPtr::strong_count(&lives),
-        3,
-        "Live node missed a refcount"
-    );
+    assert_eq!(Gc::strong_count(&lives), 3, "Live node missed a refcount");
 
     drop(b);
 
     // B hasn't been cleand up yet, so we should still have its strong refs to 3
     assert_eq!(
-        GcPtr::strong_count(&lives),
+        Gc::strong_count(&lives),
         3,
         "Drop of cyclical parent b node decremented live refcount"
     );
@@ -173,7 +169,7 @@ fn dead_cycle_live_outbound() {
 
     // A hasn't been cleand up yet, so we should still have its strong refs to 3
     assert_eq!(
-        GcPtr::strong_count(&lives),
+        Gc::strong_count(&lives),
         3,
         "Drop of cyclical parent a node decremented live refcount"
     );
@@ -200,8 +196,8 @@ fn dead_cycle_dead_outbound() {
     }
 
     struct Cycle {
-        gc: Option<GcPtr<RefCell<Cycle>>>,
-        edge: GcPtr<Dead>,
+        gc: Option<Gc<RefCell<Cycle>>>,
+        edge: Gc<Dead>,
     }
 
     impl Traceable for Cycle {
@@ -211,14 +207,14 @@ fn dead_cycle_dead_outbound() {
         }
     }
 
-    let dies = GcPtr::new(Dead);
+    let dies = Gc::new(Dead);
 
-    let a = GcPtr::new(RefCell::new(Cycle {
+    let a = Gc::new(RefCell::new(Cycle {
         gc: None,
         edge: dies.clone(),
     }));
 
-    let b = GcPtr::new(RefCell::new(Cycle {
+    let b = Gc::new(RefCell::new(Cycle {
         gc: Some(a.clone()),
         edge: dies,
     }));
@@ -241,7 +237,7 @@ fn dead_cycle_dead_outbound() {
 #[test]
 fn cycle_live_inbound() {
     struct Cycle {
-        gc: Option<GcPtr<RefCell<Cycle>>>,
+        gc: Option<Gc<RefCell<Cycle>>>,
     }
 
     impl Traceable for Cycle {
@@ -250,9 +246,9 @@ fn cycle_live_inbound() {
         }
     }
 
-    let a = GcPtr::new(RefCell::new(Cycle { gc: None }));
+    let a = Gc::new(RefCell::new(Cycle { gc: None }));
 
-    let b = GcPtr::new(RefCell::new(Cycle {
+    let b = Gc::new(RefCell::new(Cycle {
         gc: Some(a.clone()),
     }));
 
@@ -290,7 +286,7 @@ fn cycle_live_inbound() {
 #[test]
 fn mono_cycle_live_inbound() {
     struct Cycle {
-        gc: Option<GcPtr<RefCell<Cycle>>>,
+        gc: Option<Gc<RefCell<Cycle>>>,
     }
 
     impl Traceable for Cycle {
@@ -299,7 +295,7 @@ fn mono_cycle_live_inbound() {
         }
     }
 
-    let a = GcPtr::new(RefCell::new(Cycle { gc: None }));
+    let a = Gc::new(RefCell::new(Cycle { gc: None }));
     a.borrow_mut().gc = Some(a.clone());
 
     let last = a.clone();
@@ -335,8 +331,8 @@ fn mono_cycle_live_inbound() {
 #[test]
 fn mono_cycle_live_outbound() {
     struct Cycle {
-        gc: Option<GcPtr<RefCell<Cycle>>>,
-        edge: GcPtr<u32>,
+        gc: Option<Gc<RefCell<Cycle>>>,
+        edge: Gc<u32>,
     }
 
     impl Traceable for Cycle {
@@ -346,9 +342,9 @@ fn mono_cycle_live_outbound() {
         }
     }
 
-    let live = GcPtr::new(10);
+    let live = Gc::new(10);
 
-    let a = GcPtr::new(RefCell::new(Cycle {
+    let a = Gc::new(RefCell::new(Cycle {
         gc: None,
         edge: live.clone(),
     }));
