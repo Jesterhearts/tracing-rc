@@ -97,5 +97,5 @@ collector does the following:
    de-allocated, as it is impossible for it to participate in any cycles once its inner data has
    been dropped.
 
-There is an extensive number of tests designed to exercise each of these scenarios included, and all
+There is a decent number number of tests designed to exercise each of these scenarios included, and all
 of these tests pass miri.
