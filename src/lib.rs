@@ -2,6 +2,7 @@ use std::{
     cell::Cell,
     marker::PhantomData,
     mem::ManuallyDrop,
+    num::NonZeroUsize,
     ops::Deref,
     ptr::NonNull,
 };
@@ -26,7 +27,7 @@ use crate::collector::{
 };
 
 struct Inner<T: Traceable + ?Sized> {
-    strong: Cell<usize>,
+    strong: Cell<NonZeroUsize>,
     status: Cell<Status>,
     data: ManuallyDrop<T>,
 }
@@ -66,25 +67,38 @@ where
     /// - ptr must not have been deallocated.
     /// - ptr must have been created by Box::into_raw/leak
     unsafe fn dealloc(ptr: NonNull<Self>) {
+        debug_assert_eq!(ptr.as_ref().strong.get().get(), 1);
+
         let boxed = Box::from_raw(ptr.as_ptr());
         drop(boxed)
     }
 
-    unsafe fn drop_data_dealloc(ptr: NonNull<Self>) {
-        Self::drop_data(ptr);
+    unsafe fn zombie_safe_drop_data_dealloc(ptr: NonNull<Self>) {
+        if ptr.as_ref().status.get() != Status::Dead {
+            Self::drop_data(ptr)
+        }
+
         Self::dealloc(ptr);
     }
 
-    fn strong_count(&self) -> usize {
+    fn strong_count(&self) -> NonZeroUsize {
         self.strong.get()
     }
 
     fn increment_strong_count(&self) {
-        self.strong.set(self.strong.get().checked_add(1).unwrap())
+        self.strong.set(
+            self.strong
+                .get()
+                .get()
+                .checked_add(1)
+                .and_then(NonZeroUsize::new)
+                .unwrap(),
+        )
     }
 
-    fn decrement_strong_count(&self) {
-        self.strong.set(self.strong.get() - 1)
+    unsafe fn decrement_strong_count(&self) {
+        self.strong
+            .set(NonZeroUsize::new(self.strong.get().get() - 1).unwrap())
     }
 
     fn is_live(&self) -> bool {
@@ -94,12 +108,6 @@ where
         )
     }
 
-    /// # Safety: The inner data must not have been dropped or the node must be unreachable through
-    /// safe code.
-    unsafe fn force_live(&self) {
-        self.status.set(Status::Live);
-    }
-
     fn mark_live(&self) {
         if self.status.get() == Status::RecentlyDecremented {
             self.status.set(Status::Live);
@@ -107,13 +115,7 @@ where
     }
 
     fn mark_dead(&self) {
-        if self.status.get() != Status::Zombie {
-            self.status.set(Status::Dead);
-        }
-    }
-
-    fn mark_zombie(&self) {
-        self.status.set(Status::Zombie);
+        self.status.set(Status::Dead);
     }
 
     fn mark_ref_dropped(&self) {
@@ -145,7 +147,7 @@ where
     pub fn new(data: T) -> Self {
         Self {
             ptr: Box::leak(Box::new(Inner {
-                strong: Cell::new(1),
+                strong: Cell::new(NonZeroUsize::new(1).unwrap()),
                 status: Cell::new(Status::Live),
                 data: ManuallyDrop::new(data),
             }))
@@ -155,7 +157,7 @@ where
     }
 
     pub fn strong_count(ptr: &Self) -> usize {
-        unsafe { ptr.ptr.as_ref().strong_count() }
+        unsafe { ptr.ptr.as_ref().strong_count().get() }
     }
 
     /// Get a reference into this GcPointer.
@@ -272,33 +274,19 @@ where
 impl<T: Traceable + 'static> Drop for GcPtr<T> {
     fn drop(&mut self) {
         unsafe {
-            self.ptr.as_ref().decrement_strong_count();
-
-            if self.ptr.as_ref().status.get() == Status::Dead {
-                // The collector already knows about this and will handle dropping its internal
-                // data & deallocating anything needed.
-                return;
-            }
-
-            if self.ptr.as_ref().strong_count() == 0 {
-                // This has dropped to zero refs and is not stored in the collector. We can
+            if self.ptr.as_ref().strong_count() == NonZeroUsize::new(1).unwrap() {
+                // This is the last remaining strong ref to this value so we can
                 // safely drop the inner value and de-allocate the container.
 
-                if self.ptr.as_ref().status.get() == Status::Zombie {
-                    // The collector is the only code which marks node as zombies, and it does so
-                    // _after_ it has finished processing the node. We can safely de-allocate here
-                    // without causing a double free.
-                    //
-                    // Note that we _must not_ attempt to drop the data, since it was already
-                    // dropped when the node was marked dead.
-                    Inner::dealloc(self.ptr)
-                } else {
-                    debug_assert_eq!(self.ptr.as_ref().status.get(), Status::Live);
-
-                    // We know the node is alive and hasn't had its inner data dropped yet, so we
-                    // can safely drop & deallocate the data.
-                    Inner::drop_data_dealloc(self.ptr);
-                }
+                // The collector is the only code which marks node as zombies, and it does so
+                // _after_ it has finished processing the node. We can safely de-allocate here
+                // without causing a double free.
+                //
+                // Note that we _must not_ attempt to drop the data, since it was already
+                // dropped when the node was marked dead.
+                Inner::zombie_safe_drop_data_dealloc(self.ptr);
+            } else if self.ptr.as_ref().status.get() == Status::Dead {
+                self.ptr.as_ref().decrement_strong_count();
             } else {
                 // Indicate that it might be the root of a cycle.
                 self.ptr.as_ref().mark_ref_dropped();
@@ -309,7 +297,10 @@ impl<T: Traceable + 'static> Drop for GcPtr<T> {
                 if YOUNG_GEN.with(|gen| gen.borrow().contains_key(&ptr))
                     || OLD_GEN.with(|gen| gen.borrow().contains(&ptr))
                 {
-                    // Already tracked for possible cyclical deletion
+                    // Already tracked for possible cyclical deletion, we can drop a strong
+                    // reference here without fear of early deletion.
+                    self.ptr.as_ref().decrement_strong_count();
+
                     return;
                 }
 
@@ -321,9 +312,8 @@ impl<T: Traceable + 'static> Drop for GcPtr<T> {
                     let mut gen = gen.borrow_mut();
                     debug_assert!(!gen.contains_key(&ptr));
 
-                    // The generation will handle deletion, so we need to bump the strong count by
-                    // one to prevent early deletion.
-                    ptr.as_ref().increment_strong_count();
+                    // Because we haven't decremented the strong count yet, we can safely just add
+                    // this to the young gen without fear of early deletion.
                     gen.insert(ptr, 0);
                 });
             }

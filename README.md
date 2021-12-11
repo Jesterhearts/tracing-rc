@@ -89,8 +89,8 @@ collector does the following:
    will be the strong ref added by the collector itself. If the collector sees this, it knows that
    there is no way for safe code to still access the GC pointer and it can safely de-allocate it.
    
-   If the number of references has _not_ dropped to zero, the collector marks the node as a
-   `Zombie`, indicating that its inner data has already been dropped, but that the GC pointer itself
+   If the number of references has _not_ dropped to zero, the collector leaves the node marked
+   `Dead`, indicating that its inner data has already been dropped, but that the GC pointer itself
    may still be reachable from safe code. Safe code is prevented from getting a reference to the
    data stored in a zombie pointer. When a zombie value's refcount reaches zero it is automatically
    de-allocated, as it is impossible for it to participate in any cycles once its inner data has

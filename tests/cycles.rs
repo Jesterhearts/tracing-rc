@@ -127,7 +127,8 @@ fn dead_cycle_live_outbound() {
 
     impl Traceable for Cycle {
         fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.edge.visit_children(visitor)
+            self.gc.visit_children(visitor);
+            self.edge.visit_children(visitor);
         }
     }
 
@@ -276,6 +277,7 @@ fn cycle_live_inbound() {
 
     assert_eq!(count_roots(), 1, "Node a not tracked in roots");
 
+    collect_full();
     collect_full();
 
     assert_eq!(
