@@ -1,6 +1,5 @@
 use std::{
     cell::RefCell,
-    collections::VecDeque,
     num::NonZeroUsize,
     ptr::NonNull,
 };
@@ -10,9 +9,11 @@ use indexmap::{
     IndexSet,
 };
 use petgraph::{
-    graphmap::DiGraphMap,
-    visit::IntoNeighborsDirected,
-    EdgeDirection,
+    csr::{
+        Csr,
+        NodeIndex,
+    },
+    Directed,
 };
 
 use crate::{
@@ -109,6 +110,12 @@ pub(crate) enum Status {
     Dead,
 }
 
+type GraphIndex = NodeIndex<usize>;
+
+type ConnectivityGraph = Csr<NonNull<Inner<dyn Traceable>>, (), Directed, GraphIndex>;
+
+type TracedNodeList = IndexMap<NonNull<Inner<dyn Traceable>>, (GraphIndex, NonZeroUsize)>;
+
 thread_local! { pub(crate) static OLD_GEN: RefCell<IndexSet<NonNull<Inner<dyn Traceable>>>> = RefCell::new(IndexSet::default()) }
 thread_local! { pub(crate) static YOUNG_GEN: RefCell<IndexMap<NonNull<Inner<dyn Traceable>>, usize>> = RefCell::new(IndexMap::default()) }
 
@@ -187,16 +194,19 @@ fn collect_old_gen() {
             .collect::<IndexSet<NonNull<Inner<dyn Traceable>>>>()
     });
 
-    let mut traced_nodes = DiGraphMap::with_capacity(candidate_nodes.len(), candidate_nodes.len());
+    let mut traced_nodes = TracedNodeList::with_capacity(candidate_nodes.len());
+    let mut connectivity_graph = ConnectivityGraph::default();
 
-    for node in candidate_nodes.iter().cloned() {
-        traced_nodes.add_node(node);
+    for node in candidate_nodes.iter().copied() {
+        let node_ix = connectivity_graph.add_node(node);
+        traced_nodes.insert(node, (node_ix, NonZeroUsize::new(1).unwrap()));
     }
 
     // Iterate over all nodes reachable from the old gen tracking them in the list of all
     // traced nodes.
     for ptr in candidate_nodes {
         let inner = unsafe { ptr.as_ref() };
+        let node_ix = traced_nodes[&ptr].0;
         match inner.status.get() {
             Status::Live | Status::Dead => {
                 // We'll collect it later if it a new strong reference was created and added
@@ -208,38 +218,20 @@ fn collect_old_gen() {
             Status::RecentlyDecremented => {
                 // This node had a strong ref dropped recently and might form a cycle, trace
                 // it
-                trace_children(ptr, &mut traced_nodes);
+                trace_children(inner, node_ix, &mut traced_nodes, &mut connectivity_graph);
             }
         }
     }
 
-    let mut live_nodes = IndexSet::<NonNull<Inner<dyn Traceable>>>::default();
+    let (live_nodes, mut dead_nodes): (TracedNodeList, _) = traced_nodes
+        .into_iter()
+        .partition(|(ptr, (_, refs))| unsafe { ptr.as_ref().strong_count() > *refs });
 
-    for node in traced_nodes.nodes() {
-        if unsafe { node.as_ref().strong_count() }
-            > NonZeroUsize::new(
-                traced_nodes
-                    .neighbors_directed(node, EdgeDirection::Incoming)
-                    .count()
-                    // + The strong count from the collector
-                    + 1,
-            )
-            .unwrap()
-            && live_nodes.insert(node)
-        {
-            live_nodes.extend(traced_nodes.neighbors_directed(node, EdgeDirection::Outgoing));
-        }
+    for (node_index, _) in live_nodes.values() {
+        filter_live_node_children(&connectivity_graph, *node_index, &mut dead_nodes);
     }
 
-    let mut dead_nodes = IndexSet::with_capacity(traced_nodes.node_count() - live_nodes.len());
-
-    dead_nodes.extend(
-        traced_nodes
-            .nodes()
-            .filter(|node| !live_nodes.contains(node)),
-    );
-
-    for node in live_nodes {
+    for (node, _) in live_nodes {
         // SAFETY: We added a strong ref when we added the node either to the old gen or the
         // traced set, and we're done with processing the node after this call.
         // We don't drop the strong count until after we're done marking the node as live.
@@ -252,7 +244,7 @@ fn collect_old_gen() {
     }
 
     unsafe {
-        dead_nodes.retain(|ptr| {
+        dead_nodes.retain(|ptr, _| {
             if ptr.as_ref().status.get() != Status::Dead {
                 true
             } else {
@@ -272,7 +264,7 @@ fn collect_old_gen() {
         });
     }
 
-    for ptr in dead_nodes.iter() {
+    for (ptr, _) in dead_nodes.iter() {
         unsafe { ptr.as_ref().mark_dead() };
     }
 
@@ -285,7 +277,7 @@ fn collect_old_gen() {
     // collector's strong reference (which might cause a drop implementation to de-allocate the
     // node in the face of bugs).
     unsafe {
-        for ptr in dead_nodes.iter() {
+        for (ptr, _) in dead_nodes.iter() {
             // At this point, nodes in our candidate list marked dead are _definitely dead_, so we
             // can go ahead and drop them. During drop, new refs might get added to dead
             // nodes, so we will pass back over the list we dropped and double-check
@@ -302,7 +294,7 @@ fn collect_old_gen() {
     unsafe {
         // De-allocate the dropped nodes. The refcount must be checked here as someone
         // may have stashed a copy during drop.
-        for ptr in dead_nodes {
+        for (ptr, _) in dead_nodes {
             // If the strong count is 1, dead_nodes is the last owner of the data and we can
             // safely de-allocate its memory.
             if ptr.as_ref().strong_count() == NonZeroUsize::new(1).unwrap() {
@@ -316,39 +308,77 @@ fn collect_old_gen() {
 }
 
 fn trace_children(
-    parent: NonNull<Inner<dyn Traceable>>,
-    traced_nodes: &mut DiGraphMap<NonNull<Inner<dyn Traceable>>, ()>,
+    parent: &Inner<dyn Traceable>,
+    parent_ix: GraphIndex,
+    traced_nodes: &mut TracedNodeList,
+    connectivity_graph: &mut ConnectivityGraph,
 ) {
-    let parent_inner = unsafe { parent.as_ref() };
-    parent_inner.data.visit_children(&mut GcVisitor {
+    parent.data.visit_children(&mut GcVisitor {
         visitor: &mut |node| {
             let ptr = node.inner_ptr;
             let inner = unsafe { ptr.as_ref() };
 
-            let seen_node = traced_nodes.contains_node(ptr);
-            traced_nodes.add_edge(parent, ptr, ());
+            match traced_nodes.entry(ptr) {
+                indexmap::map::Entry::Occupied(mut seen) => {
+                    // We've already seen this node. We do a saturating add because it's ok to
+                    // undercount references here and usize::max references is kind of a degenerate
+                    // case.
+                    seen.get_mut().1 =
+                        NonZeroUsize::new(seen.get().1.get().saturating_add(1)).unwrap();
+                    connectivity_graph.add_edge(parent_ix, seen.get().0, ());
+                }
+                indexmap::map::Entry::Vacant(unseen) => {
+                    // Visiting the children of this pointer may cause a
+                    // reference to it to be dropped, so we must increment the
+                    // strong count here.
+                    inner.increment_strong_count();
 
-            if !seen_node {
-                // We haven't yet visited this pointer, add it to the list
-                // of seen pointers.
+                    // We haven't yet visited this pointer, add it to the list
+                    // of seen pointers. We set the initial refcount to 2 here
+                    // because we've seen it once and we know our traced nodes
+                    // set contains it with one strong ref.
+                    let child_ix = connectivity_graph.add_node(ptr);
+                    unseen.insert((child_ix, NonZeroUsize::new(2).unwrap()));
+                    connectivity_graph.add_edge(parent_ix, child_ix, ());
 
-                // Visiting the children of this pointer may cause a
-                // reference to it to be dropped, so we must increment the
-                // strong count here.
-                inner.increment_strong_count();
-
-                match inner.status.get() {
-                    Status::Live | Status::RecentlyDecremented => {
-                        trace_children(ptr, traced_nodes);
-                    }
-                    Status::Dead => {
-                        // This is reachable if a previously dead node was
-                        // resurrected during a drop and stored as a child
-                        // of a cycle. Its inner data is dropped, so we
-                        // can't touch it.
+                    match inner.status.get() {
+                        Status::Live | Status::RecentlyDecremented => {
+                            trace_children(inner, child_ix, traced_nodes, connectivity_graph);
+                        }
+                        Status::Dead => {
+                            // This is reachable if a previously dead node was
+                            // resurrected during a drop and stored as a child
+                            // of a cycle. Its inner data is dropped, so we
+                            // can't touch it.
+                        }
                     }
                 }
             }
         },
     });
+}
+
+fn filter_live_node_children(
+    graph: &ConnectivityGraph,
+    node: NodeIndex<usize>,
+    dead_nodes: &mut TracedNodeList,
+) {
+    for child in graph.neighbors_slice(node) {
+        let node = graph[*child];
+        if dead_nodes.swap_remove(&node).is_some() {
+            // We need to decrement the strong ref we added when tracing to prevent leaks.
+            // SAFETY: We added a strong ref when we added the node either to the old gen or the
+            // traced set, and we're done with processing the after this block. We aren't making any
+            // calls out to the inner data so we're not worried about it being invalidated under us
+            // while cleaning things up.
+            unsafe {
+                // remove hints that the node might be dead in case we have a copy in the old/young
+                // gen.
+                node.as_ref().mark_live();
+                node.as_ref().decrement_strong_count()
+            };
+
+            filter_live_node_children(graph, *child, dead_nodes);
+        }
+    }
 }

@@ -106,6 +106,107 @@ fn simple_cycle() {
 }
 
 #[test]
+fn parallel_edges() {
+    // Improper edge counting could cause a graph with parallel edges to leak nodes.
+    struct Cycle {
+        gc: Option<Gc<RefCell<Cycle>>>,
+        gc2: Option<Gc<RefCell<Cycle>>>,
+    }
+
+    impl Traceable for Cycle {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
+            self.gc.visit_children(visitor);
+            self.gc2.visit_children(visitor);
+        }
+    }
+
+    let a = Gc::new(RefCell::new(Cycle {
+        gc: None,
+        gc2: None,
+    }));
+
+    let b = Gc::new(RefCell::new(Cycle {
+        gc: Some(a.clone()),
+        gc2: Some(a.clone()),
+    }));
+
+    a.borrow_mut().gc = Some(b.clone());
+    a.borrow_mut().gc2 = Some(b.clone());
+
+    drop(b);
+    drop(a);
+
+    collect_full();
+
+    assert_eq!(
+        count_roots(),
+        0,
+        "Cycle not cleaned up and removed from list"
+    );
+}
+
+#[test]
+fn live_grandchildren() {
+    // Incorrect filtering of the dead candidate list can leave grand-child nodes dead. It won't
+    // cause undefined behavior, but it's still bad.
+    struct Cycle {
+        gc: Option<Gc<RefCell<Cycle>>>,
+        data: usize,
+    }
+
+    impl Traceable for Cycle {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
+            self.gc.visit_children(visitor);
+        }
+    }
+
+    let a = Gc::new(RefCell::new(Cycle { gc: None, data: 1 }));
+
+    let b = Gc::new(RefCell::new(Cycle {
+        gc: Some(a.clone()),
+        data: 2,
+    }));
+
+    let c = Gc::new(RefCell::new(Cycle {
+        gc: Some(b.clone()),
+        data: 3,
+    }));
+
+    a.borrow_mut().gc = Some(c.clone());
+
+    // A <- B <- C <-+ <- Stack
+    // L_____________|
+    drop(b);
+    drop(a);
+
+    collect_full();
+
+    // A and B should be labeled as possibly dead, and C as live.
+    // If we fail to visit all of C's possibly dead decendencents recursively, we'll fail to re-mark
+    // a as live, and it'll become a zombie node, so we won't be able to access its data.
+    let data = c
+        // C -> B
+        .borrow()
+        .gc
+        .as_ref()
+        .unwrap()
+        .borrow()
+        // B -> A
+        .gc
+        .as_ref()
+        .unwrap()
+        .borrow()
+        // A.data
+        .data;
+
+    assert_eq!(data, 1);
+
+    // Make it so miri doesn't complain about nodes being leaked.
+    drop(c);
+    collect_full();
+}
+
+#[test]
 fn dead_cycle_live_outbound() {
     struct Lives;
 
