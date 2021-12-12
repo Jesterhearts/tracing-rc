@@ -20,6 +20,59 @@ pub trait Traceable {
     /// Attemting to access a value which has been cleaned up will cause a panic, but will not cause
     /// undefined behavior.
     ///
+    /// # Example
+    /// ```
+    /// # use std::collections::HashMap;
+    /// # use std::cell::RefCell;
+    /// # use tracing_rc::{
+    /// #     empty_traceable,
+    /// #     rc::{
+    /// #         Gc,
+    /// #         GcVisitor,
+    /// #         Traceable,
+    /// #         collect_full,
+    /// #     },
+    /// # };
+    ///
+    /// struct GraphNode<T: 'static> {
+    ///     neighbors: Vec<Gc<RefCell<GraphNode<T>>>>,
+    ///     data: T,
+    /// }
+    ///
+    /// impl<T: 'static> Traceable for GraphNode<T> {
+    ///     fn visit_children(&self, visitor: &mut GcVisitor) {
+    ///         self.neighbors.visit_children(visitor);
+    ///     }
+    /// }
+    /// # #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    /// # struct NodeId(usize);
+    /// empty_traceable!(NodeId);
+    ///
+    /// struct Graph<T: 'static> {
+    ///     nodes: HashMap<NodeId, Gc<RefCell<GraphNode<T>>>>,
+    /// }
+    ///
+    /// impl<T: 'static> Traceable for Graph<T> {
+    ///     fn visit_children(&self, visitor: &mut GcVisitor) {
+    ///         self.nodes.visit_children(visitor);
+    ///     }
+    /// }
+    /// # fn build_graph<T>() -> Graph<T> { Graph{ nodes: HashMap::default() } }
+    /// # fn operate_on_graph(_: &Graph<usize>) { }
+    ///
+    /// // Usage:
+    /// # fn main() {
+    /// {
+    ///     {
+    ///         let graph: Graph<usize> = build_graph();
+    ///         operate_on_graph(&graph);
+    ///     }
+    ///     // None of the graph nodes will remain allocated after this call.
+    ///     collect_full();
+    /// }
+    /// # }
+    /// ```
+    ///
     /// # Examples of improper implementations
     /// - You should not report Gcs owned by the inner contents of Gcs.
     /// ```
@@ -102,8 +155,8 @@ pub trait Traceable {
 }
 
 /// This will cause memory leaks if it is used to implement tracing on a type which ends up
-/// participating in a cycle. You probably don't want to implement this, since if you know that
-/// your type cannot participate in a cycle, you should probably just use std::rc.
+/// participating in a cycle. This is useful for types that are e.g. used as a key in
+/// [`std::collections::HashMap`], but are not actually `Gc` pointers.
 #[macro_export]
 macro_rules! empty_traceable {
     ($t:path) => {
