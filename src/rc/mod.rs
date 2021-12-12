@@ -321,8 +321,8 @@ where
     /// # Safety:
     /// - ptr.data must not have been dropped.
     /// - ptr.data must not have any aliasing references.
-    unsafe fn drop_data(mut ptr: NonNull<Self>) {
-        ManuallyDrop::drop(&mut ptr.as_mut().data)
+    unsafe fn drop_data(ptr: NonNull<Self>) {
+        ManuallyDrop::drop(&mut (*ptr.as_ptr()).data)
     }
 
     /// # Safety:
