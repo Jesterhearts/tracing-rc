@@ -78,6 +78,7 @@ where
             ptr: Box::leak(Box::new(Inner {
                 strong: Cell::new(NonZeroUsize::new(1).unwrap()),
                 status: Cell::new(Status::Live),
+                buffered: Cell::new(false),
                 data: ManuallyDrop::new(data),
             }))
             .into(),
@@ -207,32 +208,27 @@ impl<T: Traceable + 'static> Drop for Gc<T> {
             } else {
                 // Indicate that it might be the root of a cycle.
                 self.ptr.as_ref().mark_ref_dropped();
-
-                // Convert it to an unsized generic type
-                let ptr = self.coerce_inner();
-
-                if YOUNG_GEN.with(|gen| gen.borrow().contains_key(&ptr))
-                    || OLD_GEN.with(|gen| gen.borrow().contains(&ptr))
-                {
+                if self.ptr.as_ref().buffered.replace(true) {
                     // Already tracked for possible cyclical deletion, we can drop a strong
                     // reference here without fear of early deletion.
                     self.ptr.as_ref().decrement_strong_count();
+                } else {
+                    // Convert it to an unsized generic type
+                    let ptr = self.coerce_inner();
+                    // It's possible that this will turn out to be a member of a cycle, so we need
+                    // to add it to the list of items the collector tracks.
+                    YOUNG_GEN.with(|gen| {
+                        debug_assert!(OLD_GEN.with(|gen| !gen.borrow().contains(&ptr)));
 
-                    return;
+                        let mut gen = gen.borrow_mut();
+                        debug_assert!(!gen.contains_key(&ptr));
+
+                        // Because we haven't decremented the strong count yet, we can safely just
+                        // add this to the young gen without fear of early
+                        // deletion.
+                        gen.insert(ptr, 0);
+                    });
                 }
-
-                // It's possible that this will turn out to be a member of a cycle, so we need
-                // to add it to the list of items the collector tracks.
-                YOUNG_GEN.with(|gen| {
-                    debug_assert!(OLD_GEN.with(|gen| !gen.borrow().contains(&ptr)));
-
-                    let mut gen = gen.borrow_mut();
-                    debug_assert!(!gen.contains_key(&ptr));
-
-                    // Because we haven't decremented the strong count yet, we can safely just add
-                    // this to the young gen without fear of early deletion.
-                    gen.insert(ptr, 0);
-                });
             }
         }
     }
@@ -293,6 +289,7 @@ where
 struct Inner<T: Traceable + ?Sized> {
     strong: Cell<NonZeroUsize>,
     status: Cell<Status>,
+    buffered: Cell<bool>,
     data: ManuallyDrop<T>,
 }
 
@@ -304,6 +301,7 @@ where
         f.debug_struct("Inner")
             .field("strong", &self.strong)
             .field("status", &self.status)
+            .field("buffered", &self.buffered)
             .field(
                 "data",
                 &format!(
@@ -363,6 +361,14 @@ where
     /// # Safety:
     /// - The caller of this function must not attempt to access self after calling this function.
     unsafe fn decrement_strong_count(&self) {
+        self.strong
+            .set(NonZeroUsize::new(self.strong.get().get() - 1).unwrap())
+    }
+
+    /// # Safety:
+    /// - The caller of this function must not attempt to access self after calling this function.
+    unsafe fn unbuffer_from_collector(&self) {
+        self.buffered.set(false);
         self.strong
             .set(NonZeroUsize::new(self.strong.get().get() - 1).unwrap())
     }

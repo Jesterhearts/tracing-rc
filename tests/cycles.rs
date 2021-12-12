@@ -375,7 +375,6 @@ fn cycle_live_inbound() {
     assert_eq!(count_roots(), 1, "Node a not tracked in roots");
 
     collect_full();
-    collect_full();
 
     assert_eq!(
         count_roots(),
@@ -470,7 +469,6 @@ fn mono_cycle_live_outbound() {
 
     assert_eq!(count_roots(), 1, "Node last not tracked in roots");
 
-    collect_full();
     collect_full();
 
     assert_eq!(

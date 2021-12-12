@@ -161,7 +161,7 @@ fn collect_old_gen() {
             node.as_ref().mark_live();
 
             // We need to decrement the strong ref we added when tracing to prevent leaks.
-            node.as_ref().decrement_strong_count()
+            node.as_ref().unbuffer_from_collector();
         };
     }
 
@@ -179,7 +179,7 @@ fn collect_old_gen() {
                     // SAFETY: We added a strong ref when we added the node either to the old gen or
                     // the traced set, and we're done with processing the node
                     // after this call.
-                    ptr.as_ref().decrement_strong_count()
+                    ptr.as_ref().unbuffer_from_collector();
                 }
                 false
             }
@@ -223,7 +223,7 @@ fn collect_old_gen() {
                 Inner::dealloc(ptr);
             } else {
                 // We must remove the strong count the collector owns in order to prevent leaks.
-                ptr.as_ref().decrement_strong_count();
+                ptr.as_ref().unbuffer_from_collector();
             }
         }
     }
@@ -297,7 +297,7 @@ fn filter_live_node_children(
                 // remove hints that the node might be dead in case we have a copy in the old/young
                 // gen.
                 node.as_ref().mark_live();
-                node.as_ref().decrement_strong_count()
+                node.as_ref().unbuffer_from_collector()
             };
 
             filter_live_node_children(graph, *child, dead_nodes);
