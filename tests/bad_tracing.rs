@@ -176,7 +176,7 @@ fn report_grandchild_values_during_trace() {
 
             // This may be None during the mark phase of the collector, because the grandchild might
             // be temporarily dead. Using the deref trait here would panic (which is safe).
-            if let Some(grandchild) = self.gc.borrow().as_ref().unwrap().get() {
+            if let Some(grandchild) = Gc::get(self.gc.borrow().as_ref().unwrap()) {
                 grandchild.gc.borrow().visit_children(visitor)
             };
         }

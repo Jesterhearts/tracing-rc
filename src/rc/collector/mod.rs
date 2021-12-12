@@ -28,15 +28,19 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct Node {
+pub(crate) struct Node {
     pub(super) inner_ptr: NonNull<Inner<dyn Traceable>>,
 }
 
+/// Visitor provided during tracing of the reachable object graph. You shouldn't need to interact
+/// with this as [Gc::visit_children](`Gc<T>::visit_children`) will do the right thing for
+/// you, but you may call [`Self::visit_node`] if you prefer.
 pub struct GcVisitor<'cycle> {
     visitor: &'cycle mut dyn FnMut(Node),
 }
 
 impl GcVisitor<'_> {
+    /// Visit an owned [Gc] node.
     pub fn visit_node<T: Traceable>(&mut self, node: &Gc<T>) {
         (self.visitor)(node.node());
     }
@@ -54,20 +58,6 @@ thread_local! { pub(super) static YOUNG_GEN: RefCell<IndexMap<NonNull<Inner<dyn 
 #[doc(hidden)]
 pub fn count_roots() -> usize {
     OLD_GEN.with(|old| old.borrow().len()) + YOUNG_GEN.with(|young| young.borrow().len())
-}
-
-#[doc(hidden)]
-pub fn visit_all_roots(visitor: &mut dyn FnMut(Node)) {
-    YOUNG_GEN.with(|young| {
-        for (root, _) in young.borrow().iter() {
-            visitor(Node { inner_ptr: *root })
-        }
-    });
-    OLD_GEN.with(|old| {
-        for root in old.borrow().iter() {
-            visitor(Node { inner_ptr: *root })
-        }
-    });
 }
 
 /// Perform a full, cycle-tracing collection of both the old & young gen.

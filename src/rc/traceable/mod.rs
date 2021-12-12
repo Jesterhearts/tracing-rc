@@ -1,10 +1,11 @@
 use crate::rc::GcVisitor;
 
-/// Must be implemented for any value which will be stored inside of a Gc.
+/// Must be implemented for any value which will be stored inside of a [Gc](`crate::rc::Gc`).
 ///
 /// While this is implemented for many of Rust's basic types, it's not
-/// recommended that you store them in a Gc, as there is still a real
-/// cost to doing so. You're probably better off using std::rc.
+/// recommended that you store them in a [Gc](`crate::rc::Gc`), as there is still a real
+/// cost to doing so. You're probably better off using [std::rc::Rc] in cases where you know a type
+/// can't participate in cycles.
 pub trait Traceable {
     /// Visit the gc pointers owned by this type.
     ///
@@ -19,14 +20,14 @@ pub trait Traceable {
     /// Attemting to access a value which has been cleaned up will cause a panic, but will not cause
     /// undefined behavior.
     ///
+    /// # Examples of improper implementations
     /// - You should not report Gcs owned by the inner contents of Gcs.
     /// ```
-    /// use tracing_rc::rc::{
-    ///     Gc,
-    ///     GcVisitor,
-    ///     Traceable,
-    /// };
-    ///
+    /// # use tracing_rc::rc::{
+    /// #     Gc,
+    /// #     GcVisitor,
+    /// #     Traceable,
+    /// # };
     /// struct MyStruct {
     ///     ptr: Gc<MyStruct>,
     ///     other_ptr: Gc<MyStruct>,
@@ -35,23 +36,24 @@ pub trait Traceable {
     /// impl Traceable for MyStruct {
     ///     fn visit_children(&self, visitor: &mut GcVisitor) {
     ///         // This is normal and ok.
-    ///         visitor.visit_node(&self.ptr);
+    ///         self.ptr.visit_children(visitor);
     ///         // This is also acceptable
-    ///         self.other_ptr.visit_children(visitor);
+    ///         visitor.visit_node(&self.other_ptr);
     ///
-    ///         // This will not cause undefined behavior, but it is wrong and may cause panics.
+    ///         // This will not cause undefined behavior, but it is wrong and may cause panics if
+    ///         // it causes the collector to believe the node is dead, and the program later
+    ///         // attempts to access the now dead value.
     ///         self.ptr.ptr.visit_children(visitor);
     ///     }
     /// }
     /// ```
     /// - You should not report a unique Gc instance twice.
     /// ```
-    /// use tracing_rc::rc::{
-    ///     Gc,
-    ///     GcVisitor,
-    ///     Traceable,
-    /// };
-    ///
+    /// # use tracing_rc::rc::{
+    /// #     Gc,
+    /// #     GcVisitor,
+    /// #     Traceable,
+    /// # };
     /// struct MyStruct {
     ///     ptr: Gc<usize>,
     /// }
@@ -69,12 +71,11 @@ pub trait Traceable {
     /// - You should not report Gcs that are not owned by your object.
     ///     - It is acceptable skip reporting, although doing so will result in memory leaks.
     /// ```
-    /// use tracing_rc::rc::{
-    ///     Gc,
-    ///     GcVisitor,
-    ///     Traceable,
-    /// };
-    ///
+    /// # use tracing_rc::rc::{
+    /// #     Gc,
+    /// #     GcVisitor,
+    /// #     Traceable,
+    /// # };
     /// thread_local! { static GLOBAL_PTR: Gc<usize> = Gc::new(10)}
     ///
     /// struct MyStruct {
@@ -104,7 +105,7 @@ pub trait Traceable {
 /// participating in a cycle. You probably don't want to implement this, since if you know that
 /// your type cannot participate in a cycle, you should probably just use std::rc.
 #[macro_export]
-macro_rules!  empty_traceable {
+macro_rules! empty_traceable {
     ($t:path) => {
         impl Traceable for $t {
             fn visit_children(&self, _: &mut GcVisitor) {}
