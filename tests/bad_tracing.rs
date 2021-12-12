@@ -47,8 +47,8 @@ fn drop_cyclic_value_during_trace() {
     impl Traceable for Extra {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
-            // There should be > 1 outstanding refs to this value before this point, so it'll get
-            // added to the old gen. This shouldn't cause undefined behavior though.
+            // There should be > 1 outstanding refs to this value before this point, but we know
+            // it's buffered by the collector, we skip adding it for collection at this point.
             *self.gc.borrow_mut() = None;
         }
     }
@@ -61,10 +61,6 @@ fn drop_cyclic_value_during_trace() {
 
     drop(first);
 
-    // This tries to collect the full cycle, but we get an extra instance in the young gen due to a
-    // buggy Traceable implementation.
-    collect_full();
-    // This cleans up the bad value.
     collect_full();
 }
 
