@@ -1,8 +1,9 @@
 use std::cell::RefCell;
 
-use tracing_rc::{
+use tracing_rc::rc::{
     collect_full,
     Gc,
+    GcVisitor,
     Traceable,
 };
 
@@ -12,7 +13,7 @@ struct GraphNode<T: 'static> {
 }
 
 impl<T> Traceable for GraphNode<T> {
-    fn visit_children(&self, visitor: &mut tracing_rc::GcVisitor) {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
         self.edge.visit_children(visitor);
     }
 }

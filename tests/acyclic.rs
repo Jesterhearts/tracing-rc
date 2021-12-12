@@ -1,12 +1,12 @@
 use tracing_rc::{
-    collect_with_options,
-    collector::{
-        count_roots,
-        CollectOptions,
+    rc::{
+        collect_with_options,
+        collector::count_roots,
+        Gc,
+        GcVisitor,
+        Traceable,
     },
-    Gc,
-    GcVisitor,
-    Traceable,
+    CollectOptions,
 };
 
 #[test]

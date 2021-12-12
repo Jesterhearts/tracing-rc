@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use tracing_rc::{
+use tracing_rc::rc::{
     collect_full,
     Gc,
     GcVisitor,

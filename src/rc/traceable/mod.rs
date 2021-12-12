@@ -1,4 +1,4 @@
-use crate::GcVisitor;
+use crate::rc::GcVisitor;
 
 /// Must be implemented for any value which will be stored inside of a Gc.
 ///
@@ -21,7 +21,7 @@ pub trait Traceable {
     ///
     /// - You should not report Gcs owned by the inner contents of Gcs.
     /// ```
-    /// use tracing_rc::{
+    /// use tracing_rc::rc::{
     ///     Gc,
     ///     GcVisitor,
     ///     Traceable,
@@ -46,7 +46,7 @@ pub trait Traceable {
     /// ```
     /// - You should not report a unique Gc instance twice.
     /// ```
-    /// use tracing_rc::{
+    /// use tracing_rc::rc::{
     ///     Gc,
     ///     GcVisitor,
     ///     Traceable,
@@ -69,7 +69,7 @@ pub trait Traceable {
     /// - You should not report Gcs that are not owned by your object.
     ///     - It is acceptable skip reporting, although doing so will result in memory leaks.
     /// ```
-    /// use tracing_rc::{
+    /// use tracing_rc::rc::{
     ///     Gc,
     ///     GcVisitor,
     ///     Traceable,
