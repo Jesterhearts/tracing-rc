@@ -369,8 +369,7 @@ where
     /// - The caller of this function must not attempt to access self after calling this function.
     unsafe fn unbuffer_from_collector(&self) {
         self.buffered.set(false);
-        self.strong
-            .set(NonZeroUsize::new(self.strong.get().get() - 1).unwrap())
+        self.decrement_strong_count();
     }
 
     fn is_live(&self) -> bool {
