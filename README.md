@@ -7,13 +7,13 @@ useful if you have some number of interlinked data structures - e.g. `GraphNode`
 which don't have clear lifetimes or ownership.
 
 `Gc` is probably the wrong choice for many usecases:
-    - If you have a data structure with clear parent-child relationships (like a doubly-linked list
-      or tree), you should probably just use `std::rc::Rc` and `Weak`.
-    - If your data is only used for a certain scope and discarded wholesale, you will probably
-      benefit from a crate like [typed-arena](https://lib.rs/crates/typed-arena) or
-      [bumpalo](https://crates.io/crates/bumpalo)
-    - If you have a single type and want to add/remove values, something like
-      [generational-arena](https://lib.rs/crates/generational-arena) is probably best.
+- If you have a data structure with clear parent-child relationships (like a doubly-linked list or
+  tree), you should probably just use `std::rc::Rc` and `Weak`.
+- If your data is only used for a certain scope and discarded wholesale, you will probably benefit
+  from a crate like [typed-arena](https://lib.rs/crates/typed-arena) or
+  [bumpalo](https://crates.io/crates/bumpalo)
+- If you have a single type and want to add/remove values, something like
+  [generational-arena](https://lib.rs/crates/generational-arena) is probably best.
 
 # Soundness & Rc Collector Design Considerations
 Because any implementation of the `Traceable` trait and custom `Drop` implementations for objects
