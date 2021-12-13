@@ -1,11 +1,11 @@
 use crate::rc::GcVisitor;
 
-/// Must be implemented for any value which will be stored inside of a [Gc](`crate::rc::Gc`).
+/// Must be implemented for any value which will be stored inside of a [`Gc`](crate::rc::Gc).
 ///
 /// While this is implemented for many of Rust's basic types, it's not
-/// recommended that you store them in a [Gc](`crate::rc::Gc`), as there is still a real
-/// cost to doing so. You're probably better off using [`std::rc::Rc`] in cases where you know a
-/// type can't participate in cycles.
+/// recommended that you store them in a [`Gc`](crate::rc::Gc) unless they contain possibly cyclic
+/// references as there is still a real cost to doing so. You're probably better off using
+/// [`std::rc::Rc`] in cases where you know a type can't participate in cycles.
 pub trait Traceable {
     /// Visit the gc pointers owned by this type.
     ///
