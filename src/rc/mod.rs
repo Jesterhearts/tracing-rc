@@ -65,7 +65,7 @@ where
     T: Traceable + 'static,
 {
     fn visit_children(&self, visitor: &mut GcVisitor) {
-        visitor.visit_node(self)
+        visitor.visit_node(self);
     }
 }
 
@@ -94,14 +94,14 @@ where
     T: Traceable + 'static,
 {
     /// Retrieve the current number of strong references outstanding.
-    pub fn strong_count(this: &Gc<T>) -> usize {
+    pub fn strong_count(this: &Self) -> usize {
         this.get_inner().strong_count().get()
     }
 
     /// Returns true if the data in Self hasn't been dropped yet. This will almost always be the
     /// case unless it is called inside of a Drop implementation or if there is a bug present in a
     /// Traceable impl.
-    pub fn is_live(this: &Gc<T>) -> bool {
+    pub fn is_live(this: &Self) -> bool {
         this.get_inner().is_live()
     }
 
@@ -109,17 +109,13 @@ where
     ///
     /// Returns None if the pointer is dead, as the data contained in this
     /// pointer is possibly cleaned up.
-    pub fn get(this: &Gc<T>) -> Option<&T> {
-        if this.get_inner().is_live() {
-            Some(this.as_ref())
-        } else {
-            None
-        }
+    pub fn get(this: &Self) -> Option<&T> {
+        this.get_inner().is_live().then(|| this.as_ref())
     }
 
     /// Try to get a mutable referenced into this Gc. Will return None if there are oustanding
     /// strong references to this, or if the pointer is dead.
-    pub fn get_mut(this: &mut Gc<T>) -> Option<&mut T> {
+    pub fn get_mut(this: &mut Self) -> Option<&mut T> {
         if this.get_inner().strong_count() == NonZeroUsize::new(1).unwrap() && Self::is_live(this) {
             // SAFETY: We are the only reference and our data is still alive.
             unsafe { Some(Self::get_mut_unchecked(this)) }
@@ -133,7 +129,7 @@ where
     ///
     /// # Safety
     /// This gc pointer must not have had its inner data dropped yet
-    pub unsafe fn get_unchecked(this: &Gc<T>) -> &T {
+    pub unsafe fn get_unchecked(this: &Self) -> &T {
         &this.ptr.as_ref().data
     }
 
@@ -143,12 +139,12 @@ where
     /// # Safety
     /// - This gc pointer must not have had its inner data dropped yet.
     /// - There must be no other aliasing references to the inner data.
-    pub unsafe fn get_mut_unchecked(this: &mut Gc<T>) -> &mut T {
+    pub unsafe fn get_mut_unchecked(this: &mut Self) -> &mut T {
         &mut this.ptr.as_mut().data
     }
 
     /// Returns true if both this & other point to the same allocation.
-    pub fn ptr_eq(this: &Gc<T>, other: &Gc<T>) -> bool {
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
         std::ptr::eq(this.ptr.as_ptr(), other.ptr.as_ptr())
     }
 }
@@ -324,22 +320,22 @@ where
     /// - ptr.data must not have been dropped.
     /// - ptr.data must not have any aliasing references.
     unsafe fn drop_data(ptr: NonNull<Self>) {
-        ManuallyDrop::drop(&mut (*ptr.as_ptr()).data)
+        ManuallyDrop::drop(&mut (*ptr.as_ptr()).data);
     }
 
     /// # Safety:
     /// - ptr must not have been deallocated.
-    /// - ptr must have been created by Box::into_raw/leak
+    /// - ptr must have been created by [`Box::into_raw`] or [`Box::leak`]
     unsafe fn dealloc(ptr: NonNull<Self>) {
         debug_assert_eq!(ptr.as_ref().strong.get().get(), 1);
 
         let boxed = Box::from_raw(ptr.as_ptr());
-        drop(boxed)
+        drop(boxed);
     }
 
     unsafe fn zombie_safe_drop_data_dealloc(ptr: NonNull<Self>) {
         if ptr.as_ref().status.get() != Status::Dead {
-            Self::drop_data(ptr)
+            Self::drop_data(ptr);
         }
 
         Self::dealloc(ptr);
@@ -356,15 +352,16 @@ where
                 .get()
                 .checked_add(1)
                 .and_then(NonZeroUsize::new)
-                .unwrap(),
-        )
+                .expect("Strong count overflowed"),
+        );
     }
 
     /// # Safety:
     /// - The caller of this function must not attempt to access self after calling this function.
     unsafe fn decrement_strong_count(&self) {
-        self.strong
-            .set(NonZeroUsize::new(self.strong.get().get() - 1).unwrap())
+        self.strong.set(
+            NonZeroUsize::new(self.strong.get().get() - 1).expect("Underflow in strong count"),
+        );
     }
 
     /// # Safety:

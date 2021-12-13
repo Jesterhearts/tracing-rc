@@ -104,17 +104,18 @@ impl CollectOptions {
     /// The default options for cycle collection. Items remain in the young gen for 5 cycles, and
     /// both old and young gen will be process for each collection. These options will be used when
     /// calling `collect`
-    pub const DEFAULT: CollectOptions = CollectOptions {
+    pub const DEFAULT: Self = Self {
         old_gen_threshold: 5,
         kind: CollectionType::Default,
     };
     /// Forces tracing collection for all items currently awaiting cleanup.
-    pub const TRACE_AND_COLLECT_ALL: CollectOptions = Self::DEFAULT.set_old_gen_threshold(0);
+    pub const TRACE_AND_COLLECT_ALL: Self = Self::DEFAULT.set_old_gen_threshold(0);
     /// Only runs collection for the young generation. This will still move old items to the old
     /// gen.
-    pub const YOUNG_ONLY: CollectOptions = Self::DEFAULT.set_kind(CollectionType::YoungOnly);
+    pub const YOUNG_ONLY: Self = Self::DEFAULT.set_kind(CollectionType::YoungOnly);
 
     /// Alter the [`CollectionType`] performed when calling `collect_with_options`.
+    #[must_use]
     pub const fn set_kind(self, kind: CollectionType) -> Self {
         let Self {
             old_gen_threshold,
@@ -129,6 +130,7 @@ impl CollectOptions {
 
     /// Alter the number of times an item may be seen in the young generation before being moved to
     /// the old generation and traced.
+    #[must_use]
     pub const fn set_old_gen_threshold(self, threshold: usize) -> Self {
         let Self {
             old_gen_threshold: _,

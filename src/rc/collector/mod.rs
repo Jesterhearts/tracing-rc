@@ -62,12 +62,12 @@ pub fn count_roots() -> usize {
 
 /// Perform a full, cycle-tracing collection of both the old & young gen.
 pub fn collect_full() {
-    collect_with_options(CollectOptions::TRACE_AND_COLLECT_ALL)
+    collect_with_options(CollectOptions::TRACE_AND_COLLECT_ALL);
 }
 
 /// Perform a normal collection cycle.
 pub fn collect() {
-    collect_with_options(CollectOptions::default())
+    collect_with_options(CollectOptions::default());
 }
 
 /// Perform a collection cycle based on `CollectionOptions`.
@@ -102,7 +102,7 @@ fn collect_new_gen(options: CollectOptions) {
 
                 old_gen.insert(*ptr);
                 false
-            })
+            });
         });
     });
 }
@@ -149,8 +149,8 @@ fn collect_old_gen() {
         .into_iter()
         .partition(|(ptr, (_, refs))| unsafe { ptr.as_ref().strong_count() > *refs });
 
-    for (node_index, _) in live_nodes.values() {
-        filter_live_node_children(&connectivity_graph, *node_index, &mut dead_nodes);
+    for &(node_index, _) in live_nodes.values() {
+        filter_live_node_children(&connectivity_graph, node_index, &mut dead_nodes);
     }
 
     for (node, _) in live_nodes {
@@ -167,9 +167,7 @@ fn collect_old_gen() {
 
     unsafe {
         dead_nodes.retain(|ptr, _| {
-            if ptr.as_ref().status.get() != Status::Dead {
-                true
-            } else {
+            if ptr.as_ref().status.get() == Status::Dead {
                 if ptr.as_ref().strong_count() == NonZeroUsize::new(1).unwrap() {
                     // Zombie node made it to the old gen and we're the last remaining reference to
                     // it, we can safely de-allocate it here.
@@ -182,6 +180,8 @@ fn collect_old_gen() {
                     ptr.as_ref().unbuffer_from_collector();
                 }
                 false
+            } else {
+                true
             }
         });
     }
@@ -285,8 +285,8 @@ fn filter_live_node_children(
     node: NodeIndex<usize>,
     dead_nodes: &mut TracedNodeList,
 ) {
-    for child in graph.neighbors_slice(node) {
-        let node = graph[*child];
+    for &child in graph.neighbors_slice(node) {
+        let node = graph[child];
         if dead_nodes.swap_remove(&node).is_some() {
             // We need to decrement the strong ref we added when tracing to prevent leaks.
             // SAFETY: We added a strong ref when we added the node either to the old gen or the
@@ -297,10 +297,10 @@ fn filter_live_node_children(
                 // remove hints that the node might be dead in case we have a copy in the old/young
                 // gen.
                 node.as_ref().mark_live();
-                node.as_ref().unbuffer_from_collector()
+                node.as_ref().unbuffer_from_collector();
             };
 
-            filter_live_node_children(graph, *child, dead_nodes);
+            filter_live_node_children(graph, child, dead_nodes);
         }
     }
 }

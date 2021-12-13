@@ -4,12 +4,12 @@ use crate::rc::GcVisitor;
 ///
 /// While this is implemented for many of Rust's basic types, it's not
 /// recommended that you store them in a [Gc](`crate::rc::Gc`), as there is still a real
-/// cost to doing so. You're probably better off using [std::rc::Rc] in cases where you know a type
-/// can't participate in cycles.
+/// cost to doing so. You're probably better off using [`std::rc::Rc`] in cases where you know a
+/// type can't participate in cycles.
 pub trait Traceable {
     /// Visit the gc pointers owned by this type.
     ///
-    /// It is recommended that you simply call visit_children(visitor) on each value owned by the
+    /// It is recommended that you simply call `visit_children(visitor)` on each value owned by the
     /// implementor which may participate in a reference cycle. The default implementation for
     /// `Gc` will appropriately notify the collector when it is visited. You may also pass your
     /// struct's owned `Gc` values directly to the visitor.
@@ -163,6 +163,7 @@ pub trait Traceable {
 macro_rules! empty_traceable {
     ($t:path) => {
         impl Traceable for $t {
+            #[inline]
             fn visit_children(&self, _: &mut GcVisitor) {}
         }
     };
@@ -202,7 +203,7 @@ impl<T: Traceable> Traceable for std::vec::Vec<T> {
 
 impl<T: Traceable> Traceable for std::boxed::Box<T> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
-        T::visit_children(self, visitor)
+        T::visit_children(self, visitor);
     }
 }
 
@@ -247,7 +248,9 @@ impl<V: Traceable> Traceable for std::collections::BTreeSet<V> {
     }
 }
 
-impl<K: Traceable, V: Traceable> Traceable for std::collections::HashMap<K, V> {
+impl<K: Traceable, V: Traceable, S: std::hash::BuildHasher> Traceable
+    for std::collections::HashMap<K, V, S>
+{
     fn visit_children(&self, visitor: &mut GcVisitor) {
         for (k, v) in self.iter() {
             k.visit_children(visitor);
@@ -256,7 +259,7 @@ impl<K: Traceable, V: Traceable> Traceable for std::collections::HashMap<K, V> {
     }
 }
 
-impl<V: Traceable> Traceable for std::collections::HashSet<V> {
+impl<V: Traceable, S: std::hash::BuildHasher> Traceable for std::collections::HashSet<V, S> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         for v in self.iter() {
             v.visit_children(visitor);
