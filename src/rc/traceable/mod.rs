@@ -154,6 +154,8 @@ pub trait Traceable {
     fn visit_children(&self, visitor: &mut GcVisitor);
 }
 
+/// Implements a no-op [`Traceable`] for a type.
+///
 /// This will cause memory leaks if it is used to implement tracing on a type which ends up
 /// participating in a cycle. This is useful for types that are e.g. used as a key in
 /// [`std::collections::HashMap`], but are not actually `Gc` pointers.

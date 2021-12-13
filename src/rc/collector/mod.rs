@@ -33,8 +33,8 @@ pub(crate) struct Node {
 }
 
 /// Visitor provided during tracing of the reachable object graph. You shouldn't need to interact
-/// with this as [Gc::visit_children](`Gc<T>::visit_children`) will do the right thing for
-/// you, but you may call [`Self::visit_node`] if you prefer.
+/// with this as [`Gc::visit_children`] will do the right thing for you, but you may call
+/// [`Self::visit_node`] if you prefer.
 pub struct GcVisitor<'cycle> {
     visitor: &'cycle mut dyn FnMut(Node),
 }

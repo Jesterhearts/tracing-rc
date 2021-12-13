@@ -7,7 +7,9 @@ use std::{
     ptr::NonNull,
 };
 
+/// Collection algorithms for cleaning up dead [`Gc`]s.
 pub mod collector;
+/// Contains the [`Traceable`] trait which must be implemented for items stored in a [`Gc`].
 pub mod traceable;
 
 pub use collector::{
@@ -45,8 +47,8 @@ use crate::Status;
 ///   determined to be dead, but cannot provide any guarantees on **when** it will be executed.
 ///     - [`collect`] has weak guarantees even in the presence of acyclic pointers - if a node
 ///       containing your type is acyclic, but has N strong references, it may take up to `min(N,
-///       `[`CollectionOptions::old_gen_threshold`]` + 1)` calls to `collect` for the value to be
-///       cleaned up even if all parents are dropped.
+///       `[`CollectOptions::old_gen_threshold`](crate::CollectOptions::old_gen_threshold)` + 1)`
+///       calls to `collect` for the value to be cleaned up even if all parents are dropped.
 ///     - The collector does guarantee that if [`collect_full`] is used, the `Drop` implementation
 ///       for your data will have been executed by the time `collect_full` completes if the value is
 ///       dead.
