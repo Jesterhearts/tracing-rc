@@ -84,6 +84,10 @@ fn collect_new_gen(options: CollectOptions) {
         let mut old_gen = old_gen.borrow_mut();
         YOUNG_GEN.with(|gen| {
             gen.borrow_mut().retain(|ptr, generation| {
+                // SAFETY: The young gen owns a strong reference, it only de-allocates and
+                // (possibly) drops if it is the last owner. If an item is no longer possibly dead,
+                // it is marked unbuffered and never referenced by the young gen in this function
+                // again.
                 unsafe {
                     if ptr.as_ref().strong.get() == NonZeroUsize::new(1).unwrap() {
                         // This generation is the last remaining owner of the pointer, so we can
@@ -92,6 +96,15 @@ fn collect_new_gen(options: CollectOptions) {
                         // Depending on collector ordering, we can have zombie nodes in the young
                         // generation.
                         Inner::zombie_safe_drop_data_dealloc(*ptr);
+                        return false;
+                    }
+
+                    if ptr.as_ref().status.get() != Status::RecentlyDecremented {
+                        // It is alive or dead, either way we won't need to trace its children.
+                        // If it's alive, we'll get another chance to clean it up.
+                        // If it's dead, it can't have children so the destructor should handle
+                        // cleanup eventually.
+                        ptr.as_ref().unbuffer_from_collector();
                         return false;
                     }
                 }
