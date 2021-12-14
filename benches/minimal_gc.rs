@@ -1,4 +1,10 @@
-use std::rc::Rc;
+use std::{
+    rc::Rc,
+    time::{
+        Duration,
+        Instant,
+    },
+};
 
 use criterion::{
     black_box,
@@ -37,17 +43,27 @@ fn young_gen_only_gc(c: &mut Criterion) {
             BenchmarkId::new("Rc cloned child", child_count),
             &child_count,
             |b, &count| {
-                b.iter(|| {
-                    let mut vec = Vec::with_capacity(count);
-                    for _ in 0..count {
-                        vec.push(Rc::new(count));
+                b.iter_custom(|iters| {
+                    let mut total = Duration::ZERO;
+
+                    for _ in 0..iters {
+                        let mut vec = Vec::with_capacity(count);
+                        for _ in 0..count {
+                            vec.push(Rc::new(count));
+                        }
+
+                        let start = Instant::now();
+                        {
+                            (0..count).for_each(|i| {
+                                Rc::new(black_box(vec[i].clone()));
+                            });
+                        }
+
+                        black_box(vec);
+                        total += start.elapsed()
                     }
-                    {
-                        (0..count).for_each(|i| {
-                            Rc::new(black_box(vec[i].clone()));
-                        });
-                    }
-                    black_box(vec);
+
+                    total
                 })
             },
         );
@@ -56,20 +72,28 @@ fn young_gen_only_gc(c: &mut Criterion) {
             BenchmarkId::new("Gc cloned child", child_count),
             &child_count,
             |b, &count| {
-                b.iter(|| {
-                    {
+                b.iter_custom(|iters| {
+                    let mut total = Duration::ZERO;
+
+                    for _ in 0..iters {
                         let mut vec = Vec::with_capacity(count);
                         for _ in 0..count {
                             vec.push(Gc::new(count));
                         }
+
+                        let start = Instant::now();
                         {
                             (0..count).for_each(|i| {
                                 Gc::new(black_box(vec[i].clone()));
                             });
                         }
                         black_box(vec);
+
+                        collect_with_options(CollectOptions::YOUNG_ONLY);
+                        total += start.elapsed()
                     }
-                    collect_with_options(CollectOptions::YOUNG_ONLY);
+
+                    total
                 })
             },
         );
