@@ -23,7 +23,6 @@ pub trait Traceable {
     /// # Example
     /// ```
     /// # use std::collections::HashMap;
-    /// # use std::cell::RefCell;
     /// # use tracing_rc::{
     /// #     empty_traceable,
     /// #     rc::{
@@ -35,7 +34,7 @@ pub trait Traceable {
     /// # };
     ///
     /// struct GraphNode<T: 'static> {
-    ///     neighbors: Vec<Gc<RefCell<GraphNode<T>>>>,
+    ///     neighbors: Vec<Gc<GraphNode<T>>>,
     ///     data: T,
     /// }
     ///
@@ -49,7 +48,7 @@ pub trait Traceable {
     /// empty_traceable!(NodeId);
     ///
     /// struct Graph<T: 'static> {
-    ///     nodes: HashMap<NodeId, Gc<RefCell<GraphNode<T>>>>,
+    ///     nodes: HashMap<NodeId, Gc<GraphNode<T>>>,
     /// }
     ///
     /// impl<T: 'static> Traceable for Graph<T> {
@@ -96,7 +95,7 @@ pub trait Traceable {
     ///         // This will not cause undefined behavior, but it is wrong and may cause panics if
     ///         // it causes the collector to believe the node is dead, and the program later
     ///         // attempts to access the now dead value.
-    ///         self.ptr.ptr.visit_children(visitor);
+    ///         self.ptr.borrow().ptr.visit_children(visitor);
     ///     }
     /// }
     /// ```

@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 use tracing_rc::rc::{
     collect_full,
     Gc,
@@ -9,7 +7,7 @@ use tracing_rc::rc::{
 
 struct GraphNode<T: 'static> {
     data: T,
-    edge: Option<Gc<RefCell<GraphNode<T>>>>,
+    edge: Option<Gc<GraphNode<T>>>,
 }
 
 impl<T> Traceable for GraphNode<T> {
@@ -20,18 +18,18 @@ impl<T> Traceable for GraphNode<T> {
 
 fn main() {
     {
-        let node_a = Gc::new(RefCell::new(GraphNode {
+        let node_a = Gc::new(GraphNode {
             data: 10,
             edge: None,
-        }));
-        let node_b = Gc::new(RefCell::new(GraphNode {
+        });
+        let node_b = Gc::new(GraphNode {
             data: 11,
             edge: None,
-        }));
-        let node_c = Gc::new(RefCell::new(GraphNode {
+        });
+        let node_c = Gc::new(GraphNode {
             data: 12,
             edge: Some(node_a.clone()),
-        }));
+        });
 
         node_a.borrow_mut().edge = Some(node_b.clone());
         node_b.borrow_mut().edge = Some(node_c);

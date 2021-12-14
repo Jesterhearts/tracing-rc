@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 use tracing_rc::rc::{
     collect_full,
     collector::count_roots,
@@ -11,7 +9,7 @@ use tracing_rc::rc::{
 #[test]
 fn mono_simple_cycle() {
     struct Cycle {
-        gc: Option<Gc<RefCell<Cycle>>>,
+        gc: Option<Gc<Cycle>>,
     }
 
     impl Traceable for Cycle {
@@ -20,7 +18,7 @@ fn mono_simple_cycle() {
         }
     }
 
-    let a = Gc::new(RefCell::new(Cycle { gc: None }));
+    let a = Gc::new(Cycle { gc: None });
     a.borrow_mut().gc = Some(a.clone());
 
     assert_eq!(
@@ -41,7 +39,7 @@ fn mono_simple_cycle() {
 #[test]
 fn simple_cycle() {
     struct Cycle {
-        gc: Option<Gc<RefCell<Cycle>>>,
+        gc: Option<Gc<Cycle>>,
     }
 
     impl Traceable for Cycle {
@@ -52,13 +50,13 @@ fn simple_cycle() {
 
     // A.ptr -> Null
     // A ref 1
-    let a = Gc::new(RefCell::new(Cycle { gc: None }));
+    let a = Gc::new(Cycle { gc: None });
 
     // B.ptr -> A
     // B ref 1, A ref 2
-    let b = Gc::new(RefCell::new(Cycle {
+    let b = Gc::new(Cycle {
         gc: Some(a.clone()),
-    }));
+    });
 
     // A.ptr -> B
     // B ref 2, A ref 2
@@ -109,8 +107,8 @@ fn simple_cycle() {
 fn parallel_edges() {
     // Improper edge counting could cause a graph with parallel edges to leak nodes.
     struct Cycle {
-        gc: Option<Gc<RefCell<Cycle>>>,
-        gc2: Option<Gc<RefCell<Cycle>>>,
+        gc: Option<Gc<Cycle>>,
+        gc2: Option<Gc<Cycle>>,
     }
 
     impl Traceable for Cycle {
@@ -120,15 +118,15 @@ fn parallel_edges() {
         }
     }
 
-    let a = Gc::new(RefCell::new(Cycle {
+    let a = Gc::new(Cycle {
         gc: None,
         gc2: None,
-    }));
+    });
 
-    let b = Gc::new(RefCell::new(Cycle {
+    let b = Gc::new(Cycle {
         gc: Some(a.clone()),
         gc2: Some(a.clone()),
-    }));
+    });
 
     a.borrow_mut().gc = Some(b.clone());
     a.borrow_mut().gc2 = Some(b.clone());
@@ -150,7 +148,7 @@ fn live_grandchildren() {
     // Incorrect filtering of the dead candidate list can leave grand-child nodes dead. It won't
     // cause undefined behavior, but it's still bad.
     struct Cycle {
-        gc: Option<Gc<RefCell<Cycle>>>,
+        gc: Option<Gc<Cycle>>,
         data: usize,
     }
 
@@ -160,17 +158,17 @@ fn live_grandchildren() {
         }
     }
 
-    let a = Gc::new(RefCell::new(Cycle { gc: None, data: 1 }));
+    let a = Gc::new(Cycle { gc: None, data: 1 });
 
-    let b = Gc::new(RefCell::new(Cycle {
+    let b = Gc::new(Cycle {
         gc: Some(a.clone()),
         data: 2,
-    }));
+    });
 
-    let c = Gc::new(RefCell::new(Cycle {
+    let c = Gc::new(Cycle {
         gc: Some(b.clone()),
         data: 3,
-    }));
+    });
 
     a.borrow_mut().gc = Some(c.clone());
 
@@ -222,7 +220,7 @@ fn dead_cycle_live_outbound() {
     }
 
     struct Cycle {
-        gc: Option<Gc<RefCell<Cycle>>>,
+        gc: Option<Gc<Cycle>>,
         edge: Gc<Lives>,
     }
 
@@ -237,17 +235,17 @@ fn dead_cycle_live_outbound() {
 
     // A.ptr -> Null
     // A ref 1, Lives ref 2
-    let a = Gc::new(RefCell::new(Cycle {
+    let a = Gc::new(Cycle {
         gc: None,
         edge: lives.clone(),
-    }));
+    });
 
     // B.ptr -> A
     // B ref 1, A ref 2, Lives ref 3
-    let b = Gc::new(RefCell::new(Cycle {
+    let b = Gc::new(Cycle {
         gc: Some(a.clone()),
         edge: lives.clone(),
-    }));
+    });
 
     // A.ptr -> B
     // B ref 2, A ref 2, Lives ref 3
@@ -285,7 +283,7 @@ fn dead_cycle_live_outbound() {
 
     assert_eq!(count_roots(), 0, "Not all roots were collected");
 
-    assert!(lives.alive());
+    assert!(lives.borrow().alive());
 }
 
 #[test]
@@ -297,7 +295,7 @@ fn dead_cycle_dead_outbound() {
     }
 
     struct Cycle {
-        gc: Option<Gc<RefCell<Cycle>>>,
+        gc: Option<Gc<Cycle>>,
         edge: Gc<Dead>,
     }
 
@@ -310,15 +308,15 @@ fn dead_cycle_dead_outbound() {
 
     let dies = Gc::new(Dead);
 
-    let a = Gc::new(RefCell::new(Cycle {
+    let a = Gc::new(Cycle {
         gc: None,
         edge: dies.clone(),
-    }));
+    });
 
-    let b = Gc::new(RefCell::new(Cycle {
+    let b = Gc::new(Cycle {
         gc: Some(a.clone()),
         edge: dies,
-    }));
+    });
 
     a.borrow_mut().gc = Some(b.clone());
 
@@ -338,7 +336,7 @@ fn dead_cycle_dead_outbound() {
 #[test]
 fn cycle_live_inbound() {
     struct Cycle {
-        gc: Option<Gc<RefCell<Cycle>>>,
+        gc: Option<Gc<Cycle>>,
     }
 
     impl Traceable for Cycle {
@@ -347,11 +345,11 @@ fn cycle_live_inbound() {
         }
     }
 
-    let a = Gc::new(RefCell::new(Cycle { gc: None }));
+    let a = Gc::new(Cycle { gc: None });
 
-    let b = Gc::new(RefCell::new(Cycle {
+    let b = Gc::new(Cycle {
         gc: Some(a.clone()),
-    }));
+    });
 
     a.borrow_mut().gc = Some(b.clone());
 
@@ -386,7 +384,7 @@ fn cycle_live_inbound() {
 #[test]
 fn mono_cycle_live_inbound() {
     struct Cycle {
-        gc: Option<Gc<RefCell<Cycle>>>,
+        gc: Option<Gc<Cycle>>,
     }
 
     impl Traceable for Cycle {
@@ -395,7 +393,7 @@ fn mono_cycle_live_inbound() {
         }
     }
 
-    let a = Gc::new(RefCell::new(Cycle { gc: None }));
+    let a = Gc::new(Cycle { gc: None });
     a.borrow_mut().gc = Some(a.clone());
 
     let last = a.clone();
@@ -431,7 +429,7 @@ fn mono_cycle_live_inbound() {
 #[test]
 fn mono_cycle_live_outbound() {
     struct Cycle {
-        gc: Option<Gc<RefCell<Cycle>>>,
+        gc: Option<Gc<Cycle>>,
         edge: Gc<u32>,
     }
 
@@ -444,10 +442,10 @@ fn mono_cycle_live_outbound() {
 
     let live = Gc::new(10);
 
-    let a = Gc::new(RefCell::new(Cycle {
+    let a = Gc::new(Cycle {
         gc: None,
         edge: live.clone(),
-    }));
+    });
     a.borrow_mut().gc = Some(a.clone());
 
     let last = a.clone();
@@ -464,7 +462,7 @@ fn mono_cycle_live_outbound() {
         "Live node a not removed from list of roots"
     );
 
-    assert_eq!(*live, 10);
+    assert_eq!(*live.borrow(), 10);
     drop(last);
 
     assert_eq!(count_roots(), 1, "Node last not tracked in roots");
@@ -479,5 +477,5 @@ fn mono_cycle_live_outbound() {
     );
 
     // We should still have access to live
-    assert_eq!(*live, 10);
+    assert_eq!(*live.borrow(), 10);
 }

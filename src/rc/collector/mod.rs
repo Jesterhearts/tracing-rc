@@ -21,10 +21,11 @@ use crate::{
         traceable::Traceable,
         Gc,
         Inner,
+        SafeInnerView,
+        Status,
     },
     CollectOptions,
     CollectionType,
-    Status,
 };
 
 #[derive(Debug)]
@@ -84,7 +85,7 @@ fn collect_new_gen(options: CollectOptions) {
         YOUNG_GEN.with(|gen| {
             gen.borrow_mut().retain(|ptr, generation| {
                 unsafe {
-                    if ptr.as_ref().strong_count() == NonZeroUsize::new(1).unwrap() {
+                    if ptr.as_ref().strong.get() == NonZeroUsize::new(1).unwrap() {
                         // This generation is the last remaining owner of the pointer, so we can
                         // safely drop it. It's not possible from safe code for another reference to
                         // this pointer to be generated during drop.
@@ -128,6 +129,7 @@ fn collect_old_gen() {
     // traced nodes.
     for ptr in candidate_nodes {
         let inner = unsafe { ptr.as_ref() };
+
         let node_ix = traced_nodes[&ptr].0;
         match inner.status.get() {
             Status::Live | Status::Dead => {
@@ -147,7 +149,7 @@ fn collect_old_gen() {
 
     let (live_nodes, mut dead_nodes): (TracedNodeList, _) = traced_nodes
         .into_iter()
-        .partition(|(ptr, (_, refs))| unsafe { ptr.as_ref().strong_count() > *refs });
+        .partition(|(ptr, (_, refs))| unsafe { ptr.as_ref().strong.get() > *refs });
 
     for &(node_index, _) in live_nodes.values() {
         filter_live_node_children(&connectivity_graph, node_index, &mut dead_nodes);
@@ -158,46 +160,51 @@ fn collect_old_gen() {
         // traced set, and we're done with processing the node after this call.
         // We don't drop the strong count until after we're done marking the node as live.
         unsafe {
-            node.as_ref().mark_live();
+            SafeInnerView::from(node.as_ref()).mark_live();
 
-            // We need to decrement the strong ref we added when tracing to prevent leaks.
             node.as_ref().unbuffer_from_collector();
         };
     }
 
+    // SAFETY:
+    // We only attempt to de-allocate already dead nodes here, since those will have had their
+    // inner data dropped or leaked and can't have cycles. If we don't have exclusive ownership of
+    // the dead node, we remove the node from our list after we unbuffer and reduce our strong
+    // count.
+    // If a node can't be marked as dead, we also remove it from our list of nodes to drop, as we
+    // know there's an outstanding borrow of the data somewhere on the stack and we can't drop our
+    // data out from under them.
     unsafe {
         dead_nodes.retain(|ptr, _| {
             if ptr.as_ref().status.get() == Status::Dead {
-                if ptr.as_ref().strong_count() == NonZeroUsize::new(1).unwrap() {
+                if ptr.as_ref().strong.get() == NonZeroUsize::new(1).unwrap() {
                     // Zombie node made it to the old gen and we're the last remaining reference to
                     // it, we can safely de-allocate it here.
                     Inner::dealloc(*ptr);
                 } else {
-                    // We need to decrement the strong ref we added when tracing to prevent leaks.
-                    // SAFETY: We added a strong ref when we added the node either to the old gen or
-                    // the traced set, and we're done with processing the node
-                    // after this call.
                     ptr.as_ref().unbuffer_from_collector();
                 }
                 false
-            } else {
+            } else if ptr.as_ref().try_mark_dead() {
                 true
+            } else {
+                // Since try_mark_dead returns false if we fail to mark a node dead, we will filter
+                // out nodes that were erroneously marked dead here.
+                ptr.as_ref().unbuffer_from_collector();
+                false
             }
         });
     }
 
-    for (ptr, _) in dead_nodes.iter() {
-        unsafe { ptr.as_ref().mark_dead() };
-    }
-
     // SAFETY:
     // We've removed all nodes reachable from still-live nodes, and we've removed all zombie nodes.
-    // If we've made a mistake or a broken Traceable implementation has misreported its owned nodes,
-    // we'll be marking the node dead prior to dropping to make the data inaccessible. Safe code
-    // will not be able to see dropped inner values and any destructors for Gcs will not attempt
-    // to drop _or deallocate_ the node itself. We also do not deallocate or remove our
-    // collector's strong reference (which might cause a drop implementation to de-allocate the
-    // node in the face of bugs).
+    // If there was an outstanding borrow to the node, we'll have filtered it out of our dead list
+    // already above. If we've made a mistake or a broken Traceable implementation has
+    // misreported its owned nodes, we've aleady marked the node dead prior to this point, so we
+    // can drop the data without worrying about safe code being able to see dropped inner values
+    // and any destructors for Gcs will not attempt to drop _or deallocate_ the node itself. We
+    // also do not deallocate or remove our collector's strong reference (which might cause a
+    // drop implementation to de-allocate the node in the face of bugs).
     unsafe {
         for (ptr, _) in dead_nodes.iter() {
             // At this point, nodes in our candidate list marked dead are _definitely dead_, so we
@@ -217,12 +224,13 @@ fn collect_old_gen() {
         // De-allocate the dropped nodes. The refcount must be checked here as someone
         // may have stashed a copy during drop.
         for (ptr, _) in dead_nodes {
-            // If the strong count is 1, dead_nodes is the last owner of the data and we can
-            // safely de-allocate its memory.
-            if ptr.as_ref().strong_count() == NonZeroUsize::new(1).unwrap() {
+            if ptr.as_ref().strong.get() == NonZeroUsize::new(1).unwrap() {
+                // If the strong count is 1, dead_nodes is the last owner of the data and we can
+                // safely de-allocate its memory.
                 Inner::dealloc(ptr);
             } else {
-                // We must remove the strong count the collector owns in order to prevent leaks.
+                // There was a bug in a Trace implementation, and this node isn't really dead. Drop
+                // our strong count so we can hopefully clean it up later.
                 ptr.as_ref().unbuffer_from_collector();
             }
         }
@@ -235,10 +243,24 @@ fn trace_children(
     traced_nodes: &mut TracedNodeList,
     connectivity_graph: &mut ConnectivityGraph,
 ) {
-    parent.data.visit_children(&mut GcVisitor {
+    let parent = if let Ok(parent) = parent.data.try_borrow_mut() {
+        parent
+    } else {
+        // If we can't get mutable access to child, it must be exclusively borrowed by somebody
+        // somewhere on the stack or from within this trace implementation.
+        //
+        // If it's our borrow, we're already visiting that nodes children, so there's no reason for
+        // us to do so again.
+        //
+        // If it's someone else, it must be live and not visiting its
+        // children will undercount any nodes it owns, which is guaranteed to prevent us
+        // from deciding those nodes are dead.
+        return;
+    };
+
+    parent.visit_children(&mut GcVisitor {
         visitor: &mut |node| {
             let ptr = node.inner_ptr;
-            let inner = unsafe { ptr.as_ref() };
 
             match traced_nodes.entry(ptr) {
                 indexmap::map::Entry::Occupied(mut seen) => {
@@ -253,7 +275,8 @@ fn trace_children(
                     // Visiting the children of this pointer may cause a
                     // reference to it to be dropped, so we must increment the
                     // strong count here.
-                    inner.increment_strong_count();
+                    let inner = unsafe { ptr.as_ref() };
+                    SafeInnerView::from(inner).increment_strong_count();
 
                     // We haven't yet visited this pointer, add it to the list
                     // of seen pointers. We set the initial refcount to 2 here
@@ -296,7 +319,7 @@ fn filter_live_node_children(
             unsafe {
                 // remove hints that the node might be dead in case we have a copy in the old/young
                 // gen.
-                node.as_ref().mark_live();
+                SafeInnerView::from(node.as_ref()).mark_live();
                 node.as_ref().unbuffer_from_collector();
             };
 

@@ -10,8 +10,8 @@ use tracing_rc::rc::{
 #[test]
 fn pure_gc_necromancy() {
     struct Zombie {
-        cycle: RefCell<Option<Gc<Zombie>>>,
-        dead: RefCell<Option<Gc<Mancer>>>,
+        cycle: Option<Gc<Zombie>>,
+        dead: Option<Gc<Mancer>>,
     }
 
     impl Traceable for Zombie {
@@ -25,15 +25,15 @@ fn pure_gc_necromancy() {
 
     #[derive(Debug)]
     struct Necro {
-        gc: RefCell<Option<Gc<Mancer>>>,
+        gc: Option<Gc<Mancer>>,
     }
 
     impl Drop for Necro {
         fn drop(&mut self) {
             ZOMBIE.with(|zombie| {
                 *zombie.borrow_mut() = Some(Gc::new(Zombie {
-                    cycle: RefCell::new(None),
-                    dead: RefCell::new(Some(self.gc.borrow().as_ref().unwrap().clone())),
+                    cycle: None,
+                    dead: Some(self.gc.as_ref().unwrap().clone()),
                 }));
             })
         }
@@ -41,7 +41,7 @@ fn pure_gc_necromancy() {
 
     impl Traceable for Necro {
         fn visit_children(&self, visitor: &mut GcVisitor) {
-            visitor.visit_node(self.gc.borrow().as_ref().unwrap());
+            visitor.visit_node(self.gc.as_ref().unwrap());
         }
     }
 
@@ -56,11 +56,9 @@ fn pure_gc_necromancy() {
         }
     }
 
-    let necro = Gc::new(Necro {
-        gc: RefCell::new(None),
-    });
+    let necro = Gc::new(Necro { gc: None });
     let mancer = Gc::new(Mancer { gc: necro.clone() });
-    *necro.gc.borrow_mut() = Some(mancer);
+    necro.borrow_mut().gc = Some(mancer);
 
     drop(necro);
 
@@ -71,7 +69,7 @@ fn pure_gc_necromancy() {
         *zombie.borrow_mut() = None;
     });
 
-    *resurrected_owner.as_ref().unwrap().cycle.borrow_mut() = resurrected_owner.clone();
+    resurrected_owner.as_ref().unwrap().borrow_mut().cycle = resurrected_owner.clone();
 
     drop(resurrected_owner);
 

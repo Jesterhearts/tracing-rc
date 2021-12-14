@@ -55,8 +55,8 @@ fn acyclic_tree_young_gen_collects() {
 
     drop(a);
 
-    assert_eq!(*b.i, 10);
-    assert_eq!(*c.i, 10);
+    assert_eq!(*b.borrow().i.borrow(), 10);
+    assert_eq!(*c.borrow().i.borrow(), 10);
 
     assert_eq!(
         count_roots(),

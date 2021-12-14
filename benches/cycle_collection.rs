@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 use criterion::{
     black_box,
     criterion_group,
@@ -15,7 +13,7 @@ use tracing_rc::rc::{
 };
 
 struct SinglyLinked {
-    parent: Option<Gc<RefCell<SinglyLinked>>>,
+    parent: Option<Gc<SinglyLinked>>,
 }
 
 impl Traceable for SinglyLinked {
@@ -25,8 +23,8 @@ impl Traceable for SinglyLinked {
 }
 
 struct DoublyLinked {
-    parent: Option<Gc<RefCell<DoublyLinked>>>,
-    child: Option<Gc<RefCell<DoublyLinked>>>,
+    parent: Option<Gc<DoublyLinked>>,
+    child: Option<Gc<DoublyLinked>>,
 }
 
 impl Traceable for DoublyLinked {
@@ -45,11 +43,11 @@ fn simple_cycles(c: &mut Criterion) {
             |b, &length| {
                 b.iter(|| {
                     {
-                        let first = Gc::new(RefCell::new(SinglyLinked { parent: None }));
+                        let first = Gc::new(SinglyLinked { parent: None });
                         let mut next = first.clone();
 
                         for _ in 0..(length - 1) {
-                            next = Gc::new(RefCell::new(SinglyLinked { parent: Some(next) }));
+                            next = Gc::new(SinglyLinked { parent: Some(next) });
                         }
                         first.borrow_mut().parent = Some(next);
                         black_box(first);
@@ -64,18 +62,18 @@ fn simple_cycles(c: &mut Criterion) {
             |b, &length| {
                 b.iter(|| {
                     {
-                        let first = Gc::new(RefCell::new(DoublyLinked {
+                        let first = Gc::new(DoublyLinked {
                             child: None,
                             parent: None,
-                        }));
+                        });
                         let mut next = first.clone();
 
                         for _ in 0..(length - 1) {
                             let parent = next.clone();
-                            next = Gc::new(RefCell::new(DoublyLinked {
+                            next = Gc::new(DoublyLinked {
                                 parent: Some(next),
                                 child: None,
-                            }));
+                            });
                             parent.borrow_mut().child = Some(next.clone());
                         }
                         next.borrow_mut().child = Some(first.clone());

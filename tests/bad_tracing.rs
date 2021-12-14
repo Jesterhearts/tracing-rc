@@ -1,36 +1,36 @@
 use std::cell::RefCell;
 
-use tracing_rc::rc::{
-    collect_full,
-    Gc,
-    GcVisitor,
-    Traceable,
+use tracing_rc::{
+    empty_traceable,
+    rc::{
+        collect_full,
+        Gc,
+        GcVisitor,
+        Traceable,
+    },
 };
 
 #[test]
 fn add_value_during_trace() {
     #[derive(Debug)]
     struct Extra {
-        gc: RefCell<Option<Gc<Extra>>>,
+        gc: Option<Gc<Extra>>,
         added: RefCell<Option<Gc<Extra>>>,
     }
 
     impl Traceable for Extra {
         fn visit_children(&self, visitor: &mut GcVisitor) {
+            *self.added.borrow_mut() = self.gc.clone();
             self.gc.visit_children(visitor);
-            // This will be completely leaked. Note that if this happens before visit_children,
-            // we'll enter an infinite loop or overflow our stack. This is still safe though, and
-            // you really shouldn't be doing this anyways.
-            *self.added.borrow_mut() = self.gc.borrow().clone();
         }
     }
 
     let first = Gc::new(Extra {
-        gc: RefCell::new(None),
+        gc: None,
         added: RefCell::new(None),
     });
 
-    *first.gc.borrow_mut() = Some(first.clone());
+    first.borrow_mut().gc = Some(first.clone());
 
     drop(first);
 
@@ -57,7 +57,7 @@ fn drop_cyclic_value_during_trace() {
         gc: RefCell::new(None),
     });
 
-    *first.gc.borrow_mut() = Some(first.clone());
+    first.borrow_mut().gc = RefCell::new(Some(first.clone()));
 
     drop(first);
 
@@ -68,7 +68,7 @@ fn drop_cyclic_value_during_trace() {
 fn drop_acyclic_value_during_trace() {
     #[derive(Debug)]
     struct Extra {
-        gc: RefCell<Option<Gc<Extra>>>,
+        gc: Option<Gc<Extra>>,
         acyclic: RefCell<Option<Gc<usize>>>,
     }
 
@@ -85,11 +85,11 @@ fn drop_acyclic_value_during_trace() {
     }
 
     let first = Gc::new(Extra {
-        gc: RefCell::new(None),
+        gc: None,
         acyclic: RefCell::new(Some(Gc::new(10))),
     });
 
-    *first.gc.borrow_mut() = Some(first.clone());
+    first.borrow_mut().gc = Some(first.clone());
 
     drop(first);
 
@@ -103,7 +103,7 @@ fn retain_value_during_trace() {
 
     #[derive(Debug)]
     struct Extra {
-        gc: RefCell<Option<Gc<Extra>>>,
+        gc: Option<Gc<Extra>>,
     }
 
     impl Traceable for Extra {
@@ -111,15 +111,13 @@ fn retain_value_during_trace() {
             self.gc.visit_children(visitor);
 
             // This value should be immortal because of this statement.
-            SMUGGLE.with(|smuggled| *smuggled.borrow_mut() = self.gc.borrow().clone());
+            SMUGGLE.with(|smuggled| *smuggled.borrow_mut() = self.gc.clone());
         }
     }
 
-    let first = Gc::new(Extra {
-        gc: RefCell::new(None),
-    });
+    let first = Gc::new(Extra { gc: None });
 
-    *first.gc.borrow_mut() = Some(first.clone());
+    first.borrow_mut().gc = Some(first.clone());
 
     drop(first);
 
@@ -129,14 +127,14 @@ fn retain_value_during_trace() {
     SMUGGLE.with(|smuggler| {
         smuggled = smuggler.borrow_mut().take();
     });
-    assert!(smuggled.unwrap().gc.borrow().is_some());
+    assert!(smuggled.unwrap().borrow().gc.is_some());
 }
 
 #[test]
 fn report_extra_values_during_trace() {
     #[derive(Debug)]
     struct Extra {
-        gc: RefCell<Option<Gc<Extra>>>,
+        gc: Option<Gc<Extra>>,
     }
 
     impl Traceable for Extra {
@@ -148,11 +146,9 @@ fn report_extra_values_during_trace() {
         }
     }
 
-    let first = Gc::new(Extra {
-        gc: RefCell::new(None),
-    });
+    let first = Gc::new(Extra { gc: None });
 
-    *first.gc.borrow_mut() = Some(first.clone());
+    first.borrow_mut().gc = Some(first.clone());
 
     drop(first);
 
@@ -163,7 +159,7 @@ fn report_extra_values_during_trace() {
 fn report_grandchild_values_during_trace() {
     #[derive(Debug)]
     struct Extra {
-        gc: RefCell<Option<Gc<Extra>>>,
+        gc: Option<Gc<Extra>>,
     }
 
     impl Traceable for Extra {
@@ -172,23 +168,67 @@ fn report_grandchild_values_during_trace() {
 
             // This may be None during the mark phase of the collector, because the grandchild might
             // be temporarily dead. Using the deref trait here would panic (which is safe).
-            if let Some(grandchild) = Gc::get(self.gc.borrow().as_ref().unwrap()) {
-                grandchild.gc.borrow().visit_children(visitor)
+            if let Some(grandchild) = self.gc.as_ref().unwrap().try_borrow() {
+                grandchild.gc.visit_children(visitor)
             };
         }
     }
 
-    let first = Gc::new(Extra {
-        gc: RefCell::new(None),
-    });
+    let first = Gc::new(Extra { gc: None });
 
     let second = Gc::new(Extra {
-        gc: RefCell::new(Some(first.clone())),
+        gc: Some(first.clone()),
     });
 
-    *first.gc.borrow_mut() = Some(second);
+    first.borrow_mut().gc = Some(second);
 
     drop(first);
 
+    collect_full();
+}
+
+#[test]
+fn overreport_children_open_child_borrow() {
+    #[derive(Debug)]
+    struct V {
+        v: Vec<usize>,
+    }
+    empty_traceable!(V);
+
+    #[derive(Debug)]
+    struct Lies {
+        gc: Gc<V>,
+        cycle: Option<Gc<Lies>>,
+    }
+
+    impl Traceable for Lies {
+        fn visit_children(&self, visitor: &mut GcVisitor) {
+            self.gc.visit_children(visitor);
+            self.gc.visit_children(visitor);
+
+            self.cycle.visit_children(visitor);
+        }
+    }
+
+    let child = Gc::new(V { v: vec![10] });
+
+    {
+        let parent = Gc::new(Lies {
+            gc: child.clone(),
+            cycle: None,
+        });
+        parent.borrow_mut().cycle = Some(parent.clone());
+
+        drop(parent);
+
+        let child_ref = child.borrow();
+        let child_borrow: &Vec<usize> = &child_ref.v;
+
+        // If we don't prevent drops while data is borrowed, this will cause ub
+        collect_full();
+
+        assert_eq!(child_borrow[0], 10);
+    }
+    drop(child);
     collect_full();
 }

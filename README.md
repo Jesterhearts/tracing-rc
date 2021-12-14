@@ -40,8 +40,10 @@ collector does the following:
    only marks them dead after it has fully determined that it is a valid candidate for collection
    (all strong refs are from members of its cycle).
 4. After the full set of traced objects has been marked, the collector begins dropping the inner
-   data of objects it believes to be dead. This drop _does not_ and _can not_ free the memory for
-   the gc pointer, nor does it make the reference count or liveness inaccessible.
+   data of objects it believes to be dead, after checking if there are any oustanding borrows
+   (immutable or mutable). This drop _does not_ and _can not_ free the memory for the gc pointer,
+   nor does it make the reference count or liveness inaccessible. The borrow check ensures that data
+   isn't dropped out from underneath active borrows.
 5. After it has completed dropping of the inner data of dead values, the collector re-examines the
    list of dead values and checks their reference counts. Because gc pointers always decrement their
    refcount during drop, if the cycle was correctly cleaned up, the only remaining reference count
@@ -60,8 +62,6 @@ of these tests pass miri (barring leaks for intentionally misbehaved code).
 
 # Example
 ```rs
-use std::cell::RefCell;
-
 use tracing_rc::rc::{
     collect_full,
     Gc,
@@ -71,7 +71,7 @@ use tracing_rc::rc::{
 
 struct GraphNode<T: 'static> {
     data: T,
-    edge: Option<Gc<RefCell<GraphNode<T>>>>,
+    edge: Option<Gc<GraphNode<T>>>,
 }
 
 impl<T> Traceable for GraphNode<T> {
@@ -82,18 +82,18 @@ impl<T> Traceable for GraphNode<T> {
 
 fn main() {
     {
-        let node_a = Gc::new(RefCell::new(GraphNode {
+        let node_a = Gc::new(GraphNode {
             data: 10,
             edge: None,
-        }));
-        let node_b = Gc::new(RefCell::new(GraphNode {
+        });
+        let node_b = Gc::new(GraphNode {
             data: 11,
             edge: None,
-        }));
-        let node_c = Gc::new(RefCell::new(GraphNode {
+        });
+        let node_c = Gc::new(GraphNode {
             data: 12,
             edge: Some(node_a.clone()),
-        }));
+        });
 
         node_a.borrow_mut().edge = Some(node_b.clone());
         node_b.borrow_mut().edge = Some(node_c);
@@ -113,6 +113,7 @@ fn main() {
 
     // All leaked nodes have been cleaned up!
 }
+
 ```
 
 # Other GC Implementations
