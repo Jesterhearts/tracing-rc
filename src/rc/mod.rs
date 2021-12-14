@@ -371,7 +371,6 @@ where
     /// # Safety:
     /// - ptr.data must not have been dropped.
     /// - ptr.data must not have any aliasing borrows.
-    /// - ptr.status must be Dead
     unsafe fn drop_data(ptr: NonNull<Self>) {
         debug_assert!(ptr.as_ref().data.try_borrow_mut().is_ok());
 
