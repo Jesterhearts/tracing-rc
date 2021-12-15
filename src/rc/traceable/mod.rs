@@ -6,7 +6,7 @@ use crate::rc::GcVisitor;
 /// recommended that you store them in a [`Gc`](crate::rc::Gc) unless they contain possibly cyclic
 /// references as there is still a real cost to doing so. You're probably better off using
 /// [`std::rc::Rc`] in cases where you know a type can't participate in cycles.
-pub trait Traceable {
+pub trait Trace {
     /// Visit the gc pointers owned by this type.
     ///
     /// It is recommended that you simply call `visit_children(visitor)` on each value owned by the
@@ -28,7 +28,7 @@ pub trait Traceable {
     /// #     rc::{
     /// #         Gc,
     /// #         GcVisitor,
-    /// #         Traceable,
+    /// #         Trace,
     /// #         collect_full,
     /// #     },
     /// # };
@@ -38,7 +38,7 @@ pub trait Traceable {
     ///     data: T,
     /// }
     ///
-    /// impl<T: 'static> Traceable for GraphNode<T> {
+    /// impl<T: 'static> Trace for GraphNode<T> {
     ///     fn visit_children(&self, visitor: &mut GcVisitor) {
     ///         self.neighbors.visit_children(visitor);
     ///     }
@@ -51,7 +51,7 @@ pub trait Traceable {
     ///     nodes: HashMap<NodeId, Gc<GraphNode<T>>>,
     /// }
     ///
-    /// impl<T: 'static> Traceable for Graph<T> {
+    /// impl<T: 'static> Trace for Graph<T> {
     ///     fn visit_children(&self, visitor: &mut GcVisitor) {
     ///         self.nodes.visit_children(visitor);
     ///     }
@@ -78,14 +78,14 @@ pub trait Traceable {
     /// # use tracing_rc::rc::{
     /// #     Gc,
     /// #     GcVisitor,
-    /// #     Traceable,
+    /// #     Trace,
     /// # };
     /// struct MyStruct {
     ///     ptr: Gc<MyStruct>,
     ///     other_ptr: Gc<MyStruct>,
     /// }
     ///
-    /// impl Traceable for MyStruct {
+    /// impl Trace for MyStruct {
     ///     fn visit_children(&self, visitor: &mut GcVisitor) {
     ///         // This is normal and ok.
     ///         self.ptr.visit_children(visitor);
@@ -104,13 +104,13 @@ pub trait Traceable {
     /// # use tracing_rc::rc::{
     /// #     Gc,
     /// #     GcVisitor,
-    /// #     Traceable,
+    /// #     Trace,
     /// # };
     /// struct MyStruct {
     ///     ptr: Gc<usize>,
     /// }
     ///
-    /// impl Traceable for MyStruct {
+    /// impl Trace for MyStruct {
     ///     fn visit_children(&self, visitor: &mut GcVisitor) {
     ///         // This is normal and ok.
     ///         visitor.visit_node(&self.ptr);
@@ -126,7 +126,7 @@ pub trait Traceable {
     /// # use tracing_rc::rc::{
     /// #     Gc,
     /// #     GcVisitor,
-    /// #     Traceable,
+    /// #     Trace,
     /// # };
     /// thread_local! { static GLOBAL_PTR: Gc<usize> = Gc::new(10)}
     ///
@@ -135,7 +135,7 @@ pub trait Traceable {
     ///     leaks: Gc<usize>,
     /// }
     ///
-    /// impl Traceable for MyStruct {
+    /// impl Trace for MyStruct {
     ///     fn visit_children(&self, visitor: &mut GcVisitor) {
     ///         // This is normal and ok.
     ///         visitor.visit_node(&self.ptr);
@@ -153,7 +153,7 @@ pub trait Traceable {
     fn visit_children(&self, visitor: &mut GcVisitor);
 }
 
-/// Implements a no-op [`Traceable`] for a type.
+/// Implements a no-op [`Trace`] for a type.
 ///
 /// This will cause memory leaks if it is used to implement tracing on a type which ends up
 /// participating in a cycle. This is useful for types that are e.g. used as a key in
@@ -161,7 +161,7 @@ pub trait Traceable {
 #[macro_export]
 macro_rules! empty_traceable {
     ($t:path) => {
-        impl Traceable for $t {
+        impl Trace for $t {
             #[inline]
             fn visit_children(&self, _: &mut GcVisitor) {}
         }
@@ -178,13 +178,13 @@ empty_traceable!(u8, u16, u32, u64, usize, u128);
 empty_traceable!(bool, char);
 empty_traceable!(std::string::String);
 
-impl<T: Traceable> Traceable for std::cell::RefCell<T> {
+impl<T: Trace> Trace for std::cell::RefCell<T> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         T::visit_children(&self.borrow(), visitor);
     }
 }
 
-impl<T: Traceable> Traceable for std::option::Option<T> {
+impl<T: Trace> Trace for std::option::Option<T> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         if let Some(inner) = self {
             inner.visit_children(visitor);
@@ -192,7 +192,7 @@ impl<T: Traceable> Traceable for std::option::Option<T> {
     }
 }
 
-impl<T: Traceable> Traceable for std::vec::Vec<T> {
+impl<T: Trace> Trace for std::vec::Vec<T> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         for elem in self.iter() {
             elem.visit_children(visitor);
@@ -200,13 +200,13 @@ impl<T: Traceable> Traceable for std::vec::Vec<T> {
     }
 }
 
-impl<T: Traceable> Traceable for std::boxed::Box<T> {
+impl<T: Trace> Trace for std::boxed::Box<T> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         T::visit_children(self, visitor);
     }
 }
 
-impl<T: Traceable, const S: usize> Traceable for [T; S] {
+impl<T: Trace, const S: usize> Trace for [T; S] {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         for elem in self.iter() {
             elem.visit_children(visitor);
@@ -214,7 +214,7 @@ impl<T: Traceable, const S: usize> Traceable for [T; S] {
     }
 }
 
-impl<T: Traceable> Traceable for [T] {
+impl<T: Trace> Trace for [T] {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         for elem in self.iter() {
             elem.visit_children(visitor);
@@ -222,7 +222,7 @@ impl<T: Traceable> Traceable for [T] {
     }
 }
 
-impl<V: Traceable> Traceable for std::collections::BinaryHeap<V> {
+impl<V: Trace> Trace for std::collections::BinaryHeap<V> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         for v in self.iter() {
             v.visit_children(visitor);
@@ -230,7 +230,7 @@ impl<V: Traceable> Traceable for std::collections::BinaryHeap<V> {
     }
 }
 
-impl<K: Traceable, V: Traceable> Traceable for std::collections::BTreeMap<K, V> {
+impl<K: Trace, V: Trace> Trace for std::collections::BTreeMap<K, V> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         for (k, v) in self.iter() {
             k.visit_children(visitor);
@@ -239,7 +239,7 @@ impl<K: Traceable, V: Traceable> Traceable for std::collections::BTreeMap<K, V> 
     }
 }
 
-impl<V: Traceable> Traceable for std::collections::BTreeSet<V> {
+impl<V: Trace> Trace for std::collections::BTreeSet<V> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         for v in self.iter() {
             v.visit_children(visitor);
@@ -247,9 +247,7 @@ impl<V: Traceable> Traceable for std::collections::BTreeSet<V> {
     }
 }
 
-impl<K: Traceable, V: Traceable, S: std::hash::BuildHasher> Traceable
-    for std::collections::HashMap<K, V, S>
-{
+impl<K: Trace, V: Trace, S: std::hash::BuildHasher> Trace for std::collections::HashMap<K, V, S> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         for (k, v) in self.iter() {
             k.visit_children(visitor);
@@ -258,7 +256,7 @@ impl<K: Traceable, V: Traceable, S: std::hash::BuildHasher> Traceable
     }
 }
 
-impl<V: Traceable, S: std::hash::BuildHasher> Traceable for std::collections::HashSet<V, S> {
+impl<V: Trace, S: std::hash::BuildHasher> Trace for std::collections::HashSet<V, S> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         for v in self.iter() {
             v.visit_children(visitor);
@@ -266,7 +264,7 @@ impl<V: Traceable, S: std::hash::BuildHasher> Traceable for std::collections::Ha
     }
 }
 
-impl<V: Traceable> Traceable for std::collections::LinkedList<V> {
+impl<V: Trace> Trace for std::collections::LinkedList<V> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         for v in self.iter() {
             v.visit_children(visitor);
@@ -274,7 +272,7 @@ impl<V: Traceable> Traceable for std::collections::LinkedList<V> {
     }
 }
 
-impl<V: Traceable> Traceable for std::collections::VecDeque<V> {
+impl<V: Trace> Trace for std::collections::VecDeque<V> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         for v in self.iter() {
             v.visit_children(visitor);

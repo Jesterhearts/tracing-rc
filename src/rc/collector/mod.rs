@@ -18,7 +18,7 @@ use petgraph::{
 
 use crate::{
     rc::{
-        traceable::Traceable,
+        traceable::Trace,
         Gc,
         Inner,
         SafeInnerView,
@@ -30,7 +30,7 @@ use crate::{
 
 #[derive(Debug)]
 pub(crate) struct Node {
-    pub(super) inner_ptr: NonNull<Inner<dyn Traceable>>,
+    pub(super) inner_ptr: NonNull<Inner<dyn Trace>>,
 }
 
 /// Visitor provided during tracing of the reachable object graph. You shouldn't need to interact
@@ -42,19 +42,19 @@ pub struct GcVisitor<'cycle> {
 
 impl GcVisitor<'_> {
     /// Visit an owned [Gc] node.
-    pub fn visit_node<T: Traceable>(&mut self, node: &Gc<T>) {
+    pub fn visit_node<T: Trace>(&mut self, node: &Gc<T>) {
         (self.visitor)(node.node());
     }
 }
 
 type GraphIndex = NodeIndex<usize>;
 
-type ConnectivityGraph = Csr<NonNull<Inner<dyn Traceable>>, (), Directed, GraphIndex>;
+type ConnectivityGraph = Csr<NonNull<Inner<dyn Trace>>, (), Directed, GraphIndex>;
 
-type TracedNodeList = IndexMap<NonNull<Inner<dyn Traceable>>, (GraphIndex, NonZeroUsize)>;
+type TracedNodeList = IndexMap<NonNull<Inner<dyn Trace>>, (GraphIndex, NonZeroUsize)>;
 
-thread_local! { pub(super) static OLD_GEN: RefCell<IndexSet<NonNull<Inner<dyn Traceable>>>> = RefCell::new(IndexSet::default()) }
-thread_local! { pub(super) static YOUNG_GEN: RefCell<IndexMap<NonNull<Inner<dyn Traceable>>, usize>> = RefCell::new(IndexMap::default()) }
+thread_local! { pub(super) static OLD_GEN: RefCell<IndexSet<NonNull<Inner<dyn Trace>>>> = RefCell::new(IndexSet::default()) }
+thread_local! { pub(super) static YOUNG_GEN: RefCell<IndexMap<NonNull<Inner<dyn Trace>>, usize>> = RefCell::new(IndexMap::default()) }
 
 #[doc(hidden)]
 pub fn count_roots() -> usize {
@@ -127,7 +127,7 @@ fn collect_old_gen() {
 
         old_gen
             .drain(..)
-            .collect::<IndexSet<NonNull<Inner<dyn Traceable>>>>()
+            .collect::<IndexSet<NonNull<Inner<dyn Trace>>>>()
     });
 
     let mut traced_nodes = TracedNodeList::with_capacity(candidate_nodes.len());
@@ -212,7 +212,7 @@ fn collect_old_gen() {
     // SAFETY:
     // We've removed all nodes reachable from still-live nodes, and we've removed all zombie nodes.
     // If there was an outstanding borrow to the node, we'll have filtered it out of our dead list
-    // already above. If we've made a mistake or a broken Traceable implementation has
+    // already above. If we've made a mistake or a broken Trace implementation has
     // misreported its owned nodes, we've aleady marked the node dead prior to this point, so we
     // can drop the data without worrying about safe code being able to see dropped inner values
     // and any destructors for Gcs will not attempt to drop _or deallocate_ the node itself. We
@@ -249,7 +249,7 @@ fn collect_old_gen() {
 }
 
 fn trace_children(
-    parent: &Inner<dyn Traceable>,
+    parent: &Inner<dyn Trace>,
     parent_ix: GraphIndex,
     traced_nodes: &mut TracedNodeList,
     connectivity_graph: &mut ConnectivityGraph,

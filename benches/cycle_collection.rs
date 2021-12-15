@@ -14,14 +14,14 @@ use tracing_rc::rc::{
     collect_full,
     Gc,
     GcVisitor,
-    Traceable,
+    Trace,
 };
 
 struct SinglyLinked {
     parent: Option<Gc<SinglyLinked>>,
 }
 
-impl Traceable for SinglyLinked {
+impl Trace for SinglyLinked {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         self.parent.visit_children(visitor)
     }
@@ -32,7 +32,7 @@ struct DoublyLinked {
     child: Option<Gc<DoublyLinked>>,
 }
 
-impl Traceable for DoublyLinked {
+impl Trace for DoublyLinked {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         self.parent.visit_children(visitor);
         self.child.visit_children(visitor);
@@ -113,7 +113,7 @@ struct Maximal {
     neighbors: Vec<Gc<Maximal>>,
 }
 
-impl Traceable for Maximal {
+impl Trace for Maximal {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         self.neighbors.visit_children(visitor);
     }

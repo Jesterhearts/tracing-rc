@@ -4,7 +4,7 @@ use tracing_rc::{
         collector::count_roots,
         Gc,
         GcVisitor,
-        Traceable,
+        Trace,
     },
     CollectOptions,
 };
@@ -22,7 +22,7 @@ fn acyclic_chain_no_garbage() {
     struct Int {
         i: Gc<u32>,
     }
-    impl Traceable for Int {
+    impl Trace for Int {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             visitor.visit_node(&self.i);
         }
@@ -43,7 +43,7 @@ fn acyclic_tree_young_gen_collects() {
     struct Int {
         i: Gc<u32>,
     }
-    impl Traceable for Int {
+    impl Trace for Int {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             visitor.visit_node(&self.i)
         }

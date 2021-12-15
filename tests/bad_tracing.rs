@@ -6,7 +6,7 @@ use tracing_rc::{
         collect_full,
         Gc,
         GcVisitor,
-        Traceable,
+        Trace,
     },
 };
 
@@ -18,7 +18,7 @@ fn add_value_during_trace() {
         added: RefCell<Option<Gc<Extra>>>,
     }
 
-    impl Traceable for Extra {
+    impl Trace for Extra {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             *self.added.borrow_mut() = self.gc.clone();
             self.gc.visit_children(visitor);
@@ -44,7 +44,7 @@ fn drop_cyclic_value_during_trace() {
         gc: RefCell<Option<Gc<Extra>>>,
     }
 
-    impl Traceable for Extra {
+    impl Trace for Extra {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
             // There should be > 1 outstanding refs to this value before this point, but we know
@@ -72,7 +72,7 @@ fn drop_acyclic_value_during_trace() {
         acyclic: RefCell<Option<Gc<usize>>>,
     }
 
-    impl Traceable for Extra {
+    impl Trace for Extra {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
             self.acyclic.visit_children(visitor);
@@ -106,7 +106,7 @@ fn retain_value_during_trace() {
         gc: Option<Gc<Extra>>,
     }
 
-    impl Traceable for Extra {
+    impl Trace for Extra {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
 
@@ -137,7 +137,7 @@ fn report_extra_values_during_trace() {
         gc: Option<Gc<Extra>>,
     }
 
-    impl Traceable for Extra {
+    impl Trace for Extra {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
             // This is clearly a bug, if the collector trusts the traceable trait, it may try to
@@ -162,7 +162,7 @@ fn report_grandchild_values_during_trace() {
         gc: Option<Gc<Extra>>,
     }
 
-    impl Traceable for Extra {
+    impl Trace for Extra {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
 
@@ -201,7 +201,7 @@ fn overreport_children_open_child_borrow() {
         cycle: Option<Gc<Lies>>,
     }
 
-    impl Traceable for Lies {
+    impl Trace for Lies {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
             self.gc.visit_children(visitor);

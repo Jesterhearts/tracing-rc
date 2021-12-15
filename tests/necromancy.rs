@@ -4,7 +4,7 @@ use tracing_rc::rc::{
     collect_full,
     Gc,
     GcVisitor,
-    Traceable,
+    Trace,
 };
 
 #[test]
@@ -14,7 +14,7 @@ fn pure_gc_necromancy() {
         dead: Option<Gc<Mancer>>,
     }
 
-    impl Traceable for Zombie {
+    impl Trace for Zombie {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.cycle.visit_children(visitor);
             self.dead.visit_children(visitor);
@@ -39,7 +39,7 @@ fn pure_gc_necromancy() {
         }
     }
 
-    impl Traceable for Necro {
+    impl Trace for Necro {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             visitor.visit_node(self.gc.as_ref().unwrap());
         }
@@ -50,7 +50,7 @@ fn pure_gc_necromancy() {
         gc: Gc<Necro>,
     }
 
-    impl Traceable for Mancer {
+    impl Trace for Mancer {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             visitor.visit_node(&self.gc);
         }

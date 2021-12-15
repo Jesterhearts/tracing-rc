@@ -17,7 +17,7 @@
 //! #     collect_full,
 //! #     Gc,
 //! #     GcVisitor,
-//! #     Traceable,
+//! #     Trace,
 //! # };
 //! #
 //! struct GraphNode<T: 'static> {
@@ -25,7 +25,7 @@
 //!     edge: Option<Gc<GraphNode<T>>>,
 //! }
 //!
-//! impl<T> Traceable for GraphNode<T> {
+//! impl<T> Trace for GraphNode<T> {
 //!     fn visit_children(&self, visitor: &mut GcVisitor) {
 //!         self.edge.visit_children(visitor);
 //!     }

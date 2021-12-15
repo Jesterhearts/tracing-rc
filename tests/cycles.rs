@@ -3,7 +3,7 @@ use tracing_rc::rc::{
     collector::count_roots,
     Gc,
     GcVisitor,
-    Traceable,
+    Trace,
 };
 
 #[test]
@@ -12,7 +12,7 @@ fn mono_simple_cycle() {
         gc: Option<Gc<Cycle>>,
     }
 
-    impl Traceable for Cycle {
+    impl Trace for Cycle {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor)
         }
@@ -42,7 +42,7 @@ fn simple_cycle() {
         gc: Option<Gc<Cycle>>,
     }
 
-    impl Traceable for Cycle {
+    impl Trace for Cycle {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor)
         }
@@ -111,7 +111,7 @@ fn parallel_edges() {
         gc2: Option<Gc<Cycle>>,
     }
 
-    impl Traceable for Cycle {
+    impl Trace for Cycle {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
             self.gc2.visit_children(visitor);
@@ -152,7 +152,7 @@ fn live_grandchildren() {
         data: usize,
     }
 
-    impl Traceable for Cycle {
+    impl Trace for Cycle {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
         }
@@ -215,7 +215,7 @@ fn dead_cycle_live_outbound() {
         }
     }
 
-    impl Traceable for Lives {
+    impl Trace for Lives {
         fn visit_children(&self, _: &mut GcVisitor) {}
     }
 
@@ -224,7 +224,7 @@ fn dead_cycle_live_outbound() {
         edge: Gc<Lives>,
     }
 
-    impl Traceable for Cycle {
+    impl Trace for Cycle {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
             self.edge.visit_children(visitor);
@@ -290,7 +290,7 @@ fn dead_cycle_live_outbound() {
 fn dead_cycle_dead_outbound() {
     struct Dead;
 
-    impl Traceable for Dead {
+    impl Trace for Dead {
         fn visit_children(&self, _: &mut GcVisitor) {}
     }
 
@@ -299,7 +299,7 @@ fn dead_cycle_dead_outbound() {
         edge: Gc<Dead>,
     }
 
-    impl Traceable for Cycle {
+    impl Trace for Cycle {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
             visitor.visit_node(&self.edge)
@@ -339,7 +339,7 @@ fn cycle_live_inbound() {
         gc: Option<Gc<Cycle>>,
     }
 
-    impl Traceable for Cycle {
+    impl Trace for Cycle {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
         }
@@ -387,7 +387,7 @@ fn mono_cycle_live_inbound() {
         gc: Option<Gc<Cycle>>,
     }
 
-    impl Traceable for Cycle {
+    impl Trace for Cycle {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
         }
@@ -433,7 +433,7 @@ fn mono_cycle_live_outbound() {
         edge: Gc<u32>,
     }
 
-    impl Traceable for Cycle {
+    impl Trace for Cycle {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
             visitor.visit_node(&self.edge);

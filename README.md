@@ -16,13 +16,13 @@ which don't have clear lifetimes or ownership.
   [generational-arena](https://lib.rs/crates/generational-arena) is probably best.
 
 # Soundness & Rc Collector Design Considerations
-Because any implementation of the `Traceable` trait and custom `Drop` implementations for objects
+Because any implementation of the `Trace` trait and custom `Drop` implementations for objects
 owned by a garbage collected pointer can run arbitrary code, they may attempt to create new copies or
 drop existing traced objects (even already traced ones) in the middle of collection. In addition,
-due to bugs in client code, `Traceable` may report more items as children than it actually owns
+due to bugs in client code, `Trace` may report more items as children than it actually owns
 (reporting fewer is trivially safe, as it will simply leak).
 
-In order for this crate to be sound and present a safe `Traceable` trait, the collector must not
+In order for this crate to be sound and present a safe `Trace` trait, the collector must not
 cause undefined behavior in any of the scenarios outlined. In order to accomplish this, the
 collector does the following:
 1. Items that are waiting for collection or have been visited during tracing are given an extra
@@ -33,7 +33,7 @@ collector does the following:
    keeps a count of the number of times it reached each pointer through tracing, and then compares
    that count against the strong count for each pointer it traced to decide if the item is dead.
 3. Before dropping any values, the collector marks the object dead. During this process, bugs in the
-   `Traceable` implementation may cause the collector to believe a dead value is still alive
+   `Trace` implementation may cause the collector to believe a dead value is still alive
    (causing a leak) or a live value is dead (making it inaccessible, but leaving the gc pointer
    valid). Safe code is unable to access dead values (it will panic or return Option::None), and
    cannot restore the live state of a dead object. Values are never temporarily dead, the collector
@@ -66,7 +66,7 @@ use tracing_rc::rc::{
     collect_full,
     Gc,
     GcVisitor,
-    Traceable,
+    Trace,
 };
 
 struct GraphNode<T: 'static> {
@@ -74,7 +74,7 @@ struct GraphNode<T: 'static> {
     edge: Option<Gc<GraphNode<T>>>,
 }
 
-impl<T> Traceable for GraphNode<T> {
+impl<T> Trace for GraphNode<T> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         self.edge.visit_children(visitor);
     }

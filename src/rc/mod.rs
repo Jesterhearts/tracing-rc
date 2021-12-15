@@ -13,7 +13,7 @@ use std::{
 
 /// Collection algorithms for cleaning up dead [`Gc`]s.
 pub mod collector;
-/// Contains the [`Traceable`] trait which must be implemented for items stored in a [`Gc`].
+/// Contains the [`Trace`] trait which must be implemented for items stored in a [`Gc`].
 pub mod traceable;
 
 pub use collector::{
@@ -27,7 +27,7 @@ use collector::{
     OLD_GEN,
     YOUNG_GEN,
 };
-pub use traceable::Traceable;
+pub use traceable::Trace;
 
 use crate::Status;
 
@@ -64,14 +64,14 @@ use crate::Status;
 /// - The collector does not make any guarantees about the relative order of drops for dead nodes.
 ///   Even if the order appears stable, you **may not** rely on it for program correctness.
 #[derive(Debug)]
-pub struct Gc<T: Traceable + 'static> {
+pub struct Gc<T: Trace + 'static> {
     ptr: NonNull<Inner<T>>,
     _t: PhantomData<T>,
 }
 
-impl<T> Traceable for Gc<T>
+impl<T> Trace for Gc<T>
 where
-    T: Traceable + 'static,
+    T: Trace + 'static,
 {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         visitor.visit_node(self);
@@ -80,7 +80,7 @@ where
 
 impl<T> Gc<T>
 where
-    T: Traceable + 'static,
+    T: Trace + 'static,
 {
     /// Construct a new Gc containing `data` which will be automatically cleaned up with it is no
     /// longer reachable, even in the presence of cyclical references.
@@ -100,7 +100,7 @@ where
 
 impl<T> Gc<T>
 where
-    T: Traceable + 'static,
+    T: Trace + 'static,
 {
     /// Retrieve the current number of strong references outstanding.
     pub fn strong_count(this: &Self) -> usize {
@@ -109,7 +109,7 @@ where
 
     /// Returns true if the data in Self hasn't been dropped yet. This will almost always be the
     /// case unless it is called inside of a Drop implementation or if there is a bug present in a
-    /// Traceable impl.
+    /// Trace impl.
     pub fn is_live(this: &Self) -> bool {
         this.get_inner().is_live()
     }
@@ -173,7 +173,7 @@ where
 
 impl<T> Gc<T>
 where
-    T: Traceable + 'static,
+    T: Trace + 'static,
 {
     fn node(&self) -> Node {
         Node {
@@ -187,15 +187,15 @@ where
         unsafe { SafeInnerView::from(self.ptr.as_ref()) }
     }
 
-    fn coerce_inner(&self) -> NonNull<Inner<dyn Traceable>> {
+    fn coerce_inner(&self) -> NonNull<Inner<dyn Trace>> {
         // SAFETY: Barring bugs in the collector, self.ptr is not dangling and not null.
-        unsafe { NonNull::new_unchecked(self.ptr.as_ptr() as *mut Inner<dyn Traceable>) }
+        unsafe { NonNull::new_unchecked(self.ptr.as_ptr() as *mut Inner<dyn Trace>) }
     }
 }
 
 impl<T> Clone for Gc<T>
 where
-    T: Traceable + 'static,
+    T: Trace + 'static,
 {
     fn clone(&self) -> Self {
         let inner = self.get_inner();
@@ -210,7 +210,7 @@ where
     }
 }
 
-impl<T: Traceable + 'static> Drop for Gc<T> {
+impl<T: Trace + 'static> Drop for Gc<T> {
     fn drop(&mut self) {
         // SAFETY: We do not hold open refs to inner in this scope since it may get de-allocated
         // later. We only de-allocate if there are no outstanding strong references. We only drop if
@@ -257,7 +257,7 @@ impl<T: Traceable + 'static> Drop for Gc<T> {
     }
 }
 
-impl<T: Traceable + 'static> PartialEq for Gc<T>
+impl<T: Trace + 'static> PartialEq for Gc<T>
 where
     T: PartialEq,
 {
@@ -266,9 +266,9 @@ where
     }
 }
 
-impl<T: Traceable + 'static> Eq for Gc<T> where T: Eq {}
+impl<T: Trace + 'static> Eq for Gc<T> where T: Eq {}
 
-impl<T: Traceable + 'static> PartialOrd for Gc<T>
+impl<T: Trace + 'static> PartialOrd for Gc<T>
 where
     T: PartialOrd,
 {
@@ -277,7 +277,7 @@ where
     }
 }
 
-impl<T: Traceable + 'static> Ord for Gc<T>
+impl<T: Trace + 'static> Ord for Gc<T>
 where
     T: Ord,
 {
@@ -293,7 +293,7 @@ struct SafeInnerView<'v> {
 
 impl<'v, T> From<&'v Inner<T>> for SafeInnerView<'v>
 where
-    T: ?Sized + Traceable,
+    T: ?Sized + Trace,
 {
     fn from(inner: &'v Inner<T>) -> Self {
         SafeInnerView {
@@ -329,7 +329,7 @@ impl SafeInnerView<'_> {
     }
 }
 
-struct Inner<T: Traceable + ?Sized> {
+struct Inner<T: Trace + ?Sized> {
     strong: Cell<NonZeroUsize>,
     status: Cell<Status>,
     buffered: Cell<bool>,
@@ -338,7 +338,7 @@ struct Inner<T: Traceable + ?Sized> {
 
 impl<T> std::fmt::Debug for Inner<T>
 where
-    T: Traceable + ?Sized,
+    T: Trace + ?Sized,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Inner")
@@ -355,7 +355,7 @@ where
 
 impl<T> Inner<T>
 where
-    T: Traceable + ?Sized,
+    T: Trace + ?Sized,
 {
     /// # Safety:
     /// - ptr.data must not have been dropped.
@@ -414,7 +414,7 @@ where
     }
 
     /// Attempts to mark the node dead if it is possible to get exclusive access to data. This will
-    /// not always be true in the presense of buggy Traceable implementations.
+    /// not always be true in the presense of buggy Trace implementations.
     #[must_use]
     fn try_mark_dead(&self) -> bool {
         if self.data.try_borrow_mut().is_ok() {
