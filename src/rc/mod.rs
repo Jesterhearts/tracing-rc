@@ -219,13 +219,6 @@ impl<T: Traceable + 'static> Drop for Gc<T> {
             if self.ptr.as_ref().strong.get() == NonZeroUsize::new(1).unwrap() {
                 // This is the last remaining strong ref to this value so we can
                 // safely drop the inner value and de-allocate the container.
-
-                // The collector is the only code which marks node as zombies, and it does so
-                // _after_ it has finished processing the node. We can safely de-allocate here
-                // without causing a double free.
-                //
-                // Note that we _must not_ attempt to drop the data, since it was already
-                // dropped when the node was marked dead.
                 Inner::zombie_safe_drop_data_dealloc(self.ptr);
                 return;
             }
@@ -239,13 +232,9 @@ impl<T: Traceable + 'static> Drop for Gc<T> {
         } else {
             // SAFETY: We've checked that inner is not dead and can safely touch it.
             let marked_decref = unsafe { inner.try_mark_ref_dropped() };
-            if !marked_decref {
-                // SAFETY: We own a strong reference and we know someone else has a borrow out, so
-                // they have one too.
-                unsafe { inner.decrement_strong_count() }
-            } else if !inner.buffered.replace(true) {
-                // Convert it to an unsized generic type
+            if marked_decref && !inner.buffered.replace(true) {
                 let ptr = self.coerce_inner();
+
                 // It's possible that this will turn out to be a member of a cycle, so we need
                 // to add it to the list of items the collector tracks.
                 YOUNG_GEN.with(|gen| {
@@ -260,8 +249,8 @@ impl<T: Traceable + 'static> Drop for Gc<T> {
                     gen.insert(ptr, 0);
                 });
             } else {
-                // SAFETY: We own a strong reference & we know that the collector is tracking the
-                // value
+                // SAFETY: We own a strong reference & we know that the either the collector is
+                // tracking the value or someone else is.
                 unsafe { inner.decrement_strong_count() }
             }
         }
@@ -380,6 +369,7 @@ where
     /// # Safety:
     /// - ptr must not have been deallocated.
     /// - ptr must have been created by [`Box::into_raw`] or [`Box::leak`]
+    /// - ptr must not be reachable from safe code.
     unsafe fn dealloc(ptr: NonNull<Self>) {
         debug_assert_eq!(ptr.as_ref().strong.get().get(), 1);
 

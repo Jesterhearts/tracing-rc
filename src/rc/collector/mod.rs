@@ -234,8 +234,6 @@ fn collect_old_gen() {
     // case, since we can be certain it's not possible for safe code to try to read from the
     // pointer.
     unsafe {
-        // De-allocate the dropped nodes. The refcount must be checked here as someone
-        // may have stashed a copy during drop.
         for (ptr, _) in dead_nodes {
             if ptr.as_ref().strong.get() == NonZeroUsize::new(1).unwrap() {
                 // If the strong count is 1, dead_nodes is the last owner of the data and we can
