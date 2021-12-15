@@ -14,7 +14,7 @@ use std::{
 /// Collection algorithms for cleaning up dead [`Gc`]s.
 pub mod collector;
 /// Contains the [`Trace`] trait which must be implemented for items stored in a [`Gc`].
-pub mod traceable;
+pub mod trace;
 
 pub use collector::{
     collect,
@@ -27,7 +27,7 @@ use collector::{
     OLD_GEN,
     YOUNG_GEN,
 };
-pub use traceable::Trace;
+pub use trace::Trace;
 
 use crate::Status;
 

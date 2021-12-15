@@ -24,7 +24,7 @@ pub trait Trace {
     /// ```
     /// # use std::collections::HashMap;
     /// # use tracing_rc::{
-    /// #     empty_traceable,
+    /// #     empty_trace,
     /// #     rc::{
     /// #         Gc,
     /// #         GcVisitor,
@@ -45,7 +45,7 @@ pub trait Trace {
     /// }
     /// # #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     /// # struct NodeId(usize);
-    /// empty_traceable!(NodeId);
+    /// empty_trace!(NodeId);
     ///
     /// struct Graph<T: 'static> {
     ///     nodes: HashMap<NodeId, Gc<GraphNode<T>>>,
@@ -159,7 +159,7 @@ pub trait Trace {
 /// participating in a cycle. This is useful for types that are e.g. used as a key in
 /// [`std::collections::HashMap`], but are not actually `Gc` pointers.
 #[macro_export]
-macro_rules! empty_traceable {
+macro_rules! empty_trace {
     ($t:path) => {
         impl Trace for $t {
             #[inline]
@@ -167,16 +167,16 @@ macro_rules! empty_traceable {
         }
     };
     ($first:path, $($rest:path),+) => {
-        empty_traceable!($first);
-        empty_traceable!($($rest),+);
+        empty_trace!($first);
+        empty_trace!($($rest),+);
     };
 }
 
-empty_traceable!(f32, f64);
-empty_traceable!(i8, i16, i32, i64, isize, i128);
-empty_traceable!(u8, u16, u32, u64, usize, u128);
-empty_traceable!(bool, char);
-empty_traceable!(std::string::String);
+empty_trace!(f32, f64);
+empty_trace!(i8, i16, i32, i64, isize, i128);
+empty_trace!(u8, u16, u32, u64, usize, u128);
+empty_trace!(bool, char);
+empty_trace!(std::string::String);
 
 impl<T: Trace> Trace for std::cell::RefCell<T> {
     fn visit_children(&self, visitor: &mut GcVisitor) {

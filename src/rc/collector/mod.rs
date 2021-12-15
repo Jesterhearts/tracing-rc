@@ -18,7 +18,7 @@ use petgraph::{
 
 use crate::{
     rc::{
-        traceable::Trace,
+        trace::Trace,
         Gc,
         Inner,
         SafeInnerView,

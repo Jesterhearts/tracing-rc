@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use tracing_rc::{
-    empty_traceable,
+    empty_trace,
     rc::{
         collect_full,
         Gc,
@@ -140,7 +140,7 @@ fn report_extra_values_during_trace() {
     impl Trace for Extra {
         fn visit_children(&self, visitor: &mut GcVisitor) {
             self.gc.visit_children(visitor);
-            // This is clearly a bug, if the collector trusts the traceable trait, it may try to
+            // This is clearly a bug, if the collector trusts the trace trait, it may try to
             // free this value.
             self.gc.visit_children(visitor);
         }
@@ -193,7 +193,7 @@ fn overreport_children_open_child_borrow() {
     struct V {
         v: Vec<usize>,
     }
-    empty_traceable!(V);
+    empty_trace!(V);
 
     #[derive(Debug)]
     struct Lies {
