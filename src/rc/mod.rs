@@ -122,9 +122,7 @@ where
     /// # Panics
     /// Panics if the value is currently mutably borrowed.
     pub fn borrow(&self) -> Ref<'_, T> {
-        assert!(Self::is_live(self));
-        // SAFETY: Ptr is nonnull and not dangline and we asserted that self is live.
-        unsafe { (&*self.ptr.as_ref().data).borrow() }
+        self.try_borrow().unwrap()
     }
 
     /// Try to get a reference into this Gc.
@@ -133,6 +131,7 @@ where
     /// pointer is possibly cleaned up or cannot be aliased.
     pub fn try_borrow(&self) -> Option<Ref<'_, T>> {
         if self.get_inner().is_live() {
+            self.get_inner().mark_live();
             // SAFETY: Ptr is nonnull and not dangline and we asserted that self is live.
             unsafe { (&*self.ptr.as_ref().data).try_borrow().ok() }
         } else {
@@ -148,9 +147,7 @@ where
     /// # Panics
     /// Panics if the value is currently borrowed.
     pub fn borrow_mut(&self) -> RefMut<'_, T> {
-        assert!(Self::is_live(self));
-        // SAFETY: Ptr is nonnull and not dangline and we asserted that self is live.
-        unsafe { (&*self.ptr.as_ref().data).borrow_mut() }
+        self.try_borrow_mut().unwrap()
     }
 
     /// Try to get a mutable referenced into this Gc.
@@ -158,6 +155,7 @@ where
     /// Will return None if there are oustanding borrows, or if the pointer is dead.
     pub fn try_borrow_mut(&self) -> Option<RefMut<'_, T>> {
         if Self::is_live(self) {
+            self.get_inner().mark_live();
             // SAFETY: We checked self is still alive.
             unsafe { (&*self.ptr.as_ref().data).try_borrow_mut().ok() }
         } else {
@@ -241,11 +239,9 @@ impl<T: Trace + 'static> Drop for Gc<T> {
                     debug_assert!(OLD_GEN.with(|gen| !gen.borrow().contains(&ptr)));
 
                     let mut gen = gen.borrow_mut();
-                    debug_assert!(!gen.contains_key(&ptr));
-
                     // Because we haven't decremented the strong count yet, we can safely just
                     // add this to the young gen without fear of early
-                    // deletion.
+                    // deletion. It might already be present there, but that's fine.
                     gen.insert(ptr, 0);
                 });
             } else {

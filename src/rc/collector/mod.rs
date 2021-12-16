@@ -80,6 +80,8 @@ pub fn collect_with_options(options: CollectOptions) {
 }
 
 fn collect_new_gen(options: CollectOptions) {
+    let mut needs_drop = vec![];
+
     OLD_GEN.with(|old_gen| {
         let mut old_gen = old_gen.borrow_mut();
         YOUNG_GEN.with(|gen| {
@@ -90,12 +92,7 @@ fn collect_new_gen(options: CollectOptions) {
                 // again.
                 unsafe {
                     if ptr.as_ref().strong.get() == NonZeroUsize::new(1).unwrap() {
-                        // This generation is the last remaining owner of the pointer, so we can
-                        // safely drop it. It's not possible from safe code for another reference to
-                        // this pointer to be generated during drop.
-                        // Depending on collector ordering, we can have zombie nodes in the young
-                        // generation.
-                        Inner::zombie_safe_drop_data_dealloc(*ptr);
+                        needs_drop.push(*ptr);
                         return false;
                     }
 
@@ -119,6 +116,15 @@ fn collect_new_gen(options: CollectOptions) {
             });
         });
     });
+
+    for ptr in needs_drop {
+        // SAFETY: The young generation was the last remaining owner of the pointer, so we can
+        // safely drop it. It's not possible from safe code for another reference to
+        // this pointer to be generated during drop.
+        // Depending on collector ordering, we can have zombie nodes in the young
+        // generation.
+        unsafe { Inner::zombie_safe_drop_data_dealloc(ptr) }
+    }
 }
 
 fn collect_old_gen() {
@@ -171,10 +177,7 @@ fn collect_old_gen() {
     for (node, _) in live_nodes {
         // SAFETY: We added a strong ref when we added the node either to the old gen or the
         // traced set, and we're done with processing the node after this call.
-        // We don't drop the strong count until after we're done marking the node as live.
         unsafe {
-            SafeInnerView::from(node.as_ref()).mark_live();
-
             node.as_ref().unbuffer_from_collector();
         };
     }
@@ -322,15 +325,11 @@ fn filter_live_node_children(
     for &child in graph.neighbors_slice(node) {
         let node = graph[child];
         if dead_nodes.swap_remove(&node).is_some() {
-            // We need to decrement the strong ref we added when tracing to prevent leaks.
             // SAFETY: We added a strong ref when we added the node either to the old gen or the
             // traced set, and we're done with processing the after this block. We aren't making any
             // calls out to the inner data so we're not worried about it being invalidated under us
             // while cleaning things up.
             unsafe {
-                // remove hints that the node might be dead in case we have a copy in the old/young
-                // gen.
-                SafeInnerView::from(node.as_ref()).mark_live();
                 node.as_ref().unbuffer_from_collector();
             };
 
