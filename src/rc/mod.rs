@@ -282,6 +282,7 @@ where
     }
 }
 
+#[derive(Debug)]
 struct SafeInnerView<'v> {
     strong: &'v Cell<NonZeroUsize>,
     status: &'v Cell<Status>,
