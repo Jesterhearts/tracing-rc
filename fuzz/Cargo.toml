@@ -1,0 +1,27 @@
+[package]
+name = "tracing-rc-fuzz"
+version = "0.1.0"
+authors = [ "Automatically generated" ]
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = '0.4'
+petgraph = '^0.6'
+arbitrary = { version = '1', features = [ "derive" ] }
+
+[dependencies.tracing-rc]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = [ "." ]
+
+[[bin]]
+name = "random_graph"
+path = "fuzz_targets/random_graph.rs"
+test = false
+doc = false
