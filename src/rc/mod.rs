@@ -63,7 +63,6 @@ use crate::Status;
 ///       dead.
 /// - The collector does not make any guarantees about the relative order of drops for dead nodes.
 ///   Even if the order appears stable, you **may not** rely on it for program correctness.
-#[derive(Debug)]
 pub struct Gc<T: Trace + 'static> {
     ptr: NonNull<Inner<T>>,
     _t: PhantomData<T>,
@@ -89,7 +88,7 @@ where
             ptr: Box::leak(Box::new(Inner {
                 strong: Cell::new(NonZeroUsize::new(1).unwrap()),
                 status: Cell::new(Status::Live),
-                buffered: Cell::new(false),
+                buffered: Cell::new(Buffered::Unbuffered),
                 data: ManuallyDrop::new(RefCell::new(data)),
             }))
             .into(),
@@ -191,6 +190,33 @@ where
     }
 }
 
+impl<T> std::fmt::Debug for Gc<T>
+where
+    T: Trace + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Gc")
+            .field("strong", &format_args!("{}", Self::strong_count(self)))
+            .field(
+                "status",
+                &format_args!("{:?}", self.get_inner().status.get()),
+            )
+            .field(
+                "buffered",
+                &format_args!("{:?}", self.get_inner().buffered.get()),
+            )
+            .field(
+                "data",
+                &format_args!(
+                    "{:?} @ {:?}",
+                    self.try_borrow().map(|_| std::any::type_name::<T>()),
+                    unsafe { self.ptr.as_ref().data.as_ptr() }
+                ),
+            )
+            .finish()
+    }
+}
+
 impl<T> Clone for Gc<T>
 where
     T: Trace + 'static,
@@ -230,7 +256,8 @@ impl<T: Trace + 'static> Drop for Gc<T> {
         } else {
             // SAFETY: We've checked that inner is not dead and can safely touch it.
             let marked_decref = unsafe { inner.try_mark_ref_dropped() };
-            if marked_decref && !inner.buffered.replace(true) {
+            if marked_decref && inner.buffered.get() == Buffered::Unbuffered {
+                inner.buffered.set(Buffered::YoungGen);
                 let ptr = self.coerce_inner();
 
                 // It's possible that this will turn out to be a member of a cycle, so we need
@@ -282,10 +309,19 @@ where
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Buffered {
+    Unbuffered,
+    YoungGen,
+    OldGen,
+    Trace,
+}
+
 #[derive(Debug)]
 struct SafeInnerView<'v> {
     strong: &'v Cell<NonZeroUsize>,
     status: &'v Cell<Status>,
+    buffered: &'v Cell<Buffered>,
 }
 
 impl<'v, T> From<&'v Inner<T>> for SafeInnerView<'v>
@@ -296,6 +332,7 @@ where
         SafeInnerView {
             strong: &inner.strong,
             status: &inner.status,
+            buffered: &inner.buffered,
         }
     }
 }
@@ -329,7 +366,7 @@ impl SafeInnerView<'_> {
 struct Inner<T: Trace + ?Sized> {
     strong: Cell<NonZeroUsize>,
     status: Cell<Status>,
-    buffered: Cell<bool>,
+    buffered: Cell<Buffered>,
     data: ManuallyDrop<RefCell<T>>,
 }
 
@@ -344,7 +381,7 @@ where
             .field("buffered", &self.buffered)
             .field(
                 "data",
-                &format!("{} @ {:?}", std::any::type_name::<T>(), self.data.as_ptr()),
+                &format_args!("{} @ {:?}", std::any::type_name::<T>(), self.data.as_ptr()),
             )
             .finish()
     }
@@ -402,13 +439,6 @@ where
         self.strong.set(
             NonZeroUsize::new(self.strong.get().get() - 1).expect("Underflow in strong count"),
         );
-    }
-
-    /// # Safety:
-    /// - The caller of this function must not attempt to access self after calling this function.
-    unsafe fn unbuffer_from_collector(&self) {
-        self.buffered.set(false);
-        self.decrement_strong_count();
     }
 
     /// Attempts to mark the node dead if it is possible to get exclusive access to data. This will

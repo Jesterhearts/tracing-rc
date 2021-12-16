@@ -150,4 +150,5 @@ fuzz_target!(|graph: Graph| {
     drop(to_borrow);
 
     collect_full();
+    collect_full();
 });

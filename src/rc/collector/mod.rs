@@ -19,6 +19,7 @@ use petgraph::{
 use crate::{
     rc::{
         trace::Trace,
+        Buffered,
         Gc,
         Inner,
         SafeInnerView,
@@ -81,7 +82,6 @@ pub fn collect_with_options(options: CollectOptions) {
 
 fn collect_new_gen(options: CollectOptions) {
     let mut needs_drop = vec![];
-
     OLD_GEN.with(|old_gen| {
         let mut old_gen = old_gen.borrow_mut();
         YOUNG_GEN.with(|gen| {
@@ -91,6 +91,7 @@ fn collect_new_gen(options: CollectOptions) {
                 // it is marked unbuffered and never referenced by the young gen in this function
                 // again.
                 unsafe {
+                    debug_assert_eq!(ptr.as_ref().buffered.get(), Buffered::YoungGen);
                     if ptr.as_ref().strong.get() == NonZeroUsize::new(1).unwrap() {
                         needs_drop.push(*ptr);
                         return false;
@@ -101,7 +102,8 @@ fn collect_new_gen(options: CollectOptions) {
                         // If it's alive, we'll get another chance to clean it up.
                         // If it's dead, it can't have children so the destructor should handle
                         // cleanup eventually.
-                        ptr.as_ref().unbuffer_from_collector();
+                        ptr.as_ref().buffered.set(Buffered::Unbuffered);
+                        ptr.as_ref().decrement_strong_count();
                         return false;
                     }
                 }
@@ -111,6 +113,8 @@ fn collect_new_gen(options: CollectOptions) {
                     return true;
                 }
 
+                // SAFETY: ptr is not null and not dangling.
+                unsafe { ptr.as_ref().buffered.set(Buffered::OldGen) };
                 old_gen.insert(*ptr);
                 false
             });
@@ -149,6 +153,9 @@ fn collect_old_gen() {
     for ptr in candidate_nodes {
         let inner = unsafe { ptr.as_ref() };
 
+        debug_assert_eq!(inner.buffered.get(), Buffered::OldGen);
+        inner.buffered.set(Buffered::Trace);
+
         let node_ix = traced_nodes[&ptr].0;
         match inner.status.get() {
             Status::Live | Status::Dead => {
@@ -178,7 +185,7 @@ fn collect_old_gen() {
         // SAFETY: We added a strong ref when we added the node either to the old gen or the
         // traced set, and we're done with processing the node after this call.
         unsafe {
-            node.as_ref().unbuffer_from_collector();
+            unbuffer_from_trace(node);
         };
     }
 
@@ -198,7 +205,7 @@ fn collect_old_gen() {
                     // it, we can safely de-allocate it here.
                     Inner::dealloc(*ptr);
                 } else {
-                    ptr.as_ref().unbuffer_from_collector();
+                    unbuffer_from_trace(*ptr);
                 }
                 false
             } else if ptr.as_ref().try_mark_dead() {
@@ -206,10 +213,33 @@ fn collect_old_gen() {
             } else {
                 // Since try_mark_dead returns false if we fail to mark a node dead, we will filter
                 // out nodes that were erroneously marked dead here.
-                ptr.as_ref().unbuffer_from_collector();
+                unbuffer_from_trace(*ptr);
                 false
             }
         });
+    }
+
+    // SAFETY: We know our node is nonnull and not dangling. We only examine the buffer status of
+    // the node here.
+    unsafe {
+        // We might have nodes that were buffered in the old/young gen during tracing. We track that
+        // membership, so we know if the old/young gen added a reference to keep the node alive.
+        // Once we get here, we want to pull those now dead nodes out of the collection lists.
+        for node in dead_nodes.keys() {
+            match node.as_ref().buffered.get() {
+                Buffered::YoungGen => YOUNG_GEN.with(|gen| {
+                    gen.borrow_mut().swap_remove(node);
+                }),
+                Buffered::OldGen => OLD_GEN.with(|gen| {
+                    gen.borrow_mut().swap_remove(node);
+                }),
+                Buffered::Trace => {
+                    // We don't need to steal it from one of the generations, since it's in the
+                    // trace buffer
+                }
+                Buffered::Unbuffered => unreachable!("All traced nodes should be marked buffered"),
+            }
+        }
     }
 
     // SAFETY:
@@ -245,7 +275,8 @@ fn collect_old_gen() {
             } else {
                 // There was a bug in a Trace implementation, and this node isn't really dead. Drop
                 // our strong count so we can hopefully clean it up later.
-                ptr.as_ref().unbuffer_from_collector();
+                ptr.as_ref().buffered.set(Buffered::Unbuffered);
+                ptr.as_ref().decrement_strong_count();
             }
         }
     }
@@ -286,11 +317,19 @@ fn trace_children(
                     connectivity_graph.add_edge(parent_ix, seen.get().0, ());
                 }
                 indexmap::map::Entry::Vacant(unseen) => {
-                    // Visiting the children of this pointer may cause a
-                    // reference to it to be dropped, so we must increment the
-                    // strong count here.
+                    // SAFETY: ptr is not null & not dangling.
+                    // We don't examine its data if its dead.
                     let inner = unsafe { ptr.as_ref() };
-                    SafeInnerView::from(inner).increment_strong_count();
+                    if inner.buffered.get() == Buffered::Unbuffered {
+                        // Visiting the children of this pointer may cause a
+                        // reference to it to be dropped, so we must increment the
+                        // strong count here.
+                        SafeInnerView::from(inner).increment_strong_count();
+                        inner.buffered.set(Buffered::Trace);
+                    } else {
+                        // It's either old or young gen, we can steal it from the buffer later.
+                        debug_assert_ne!(inner.buffered.get(), Buffered::Trace);
+                    }
 
                     // We haven't yet visited this pointer, add it to the list
                     // of seen pointers. We set the initial refcount to 2 here
@@ -330,10 +369,22 @@ fn filter_live_node_children(
             // calls out to the inner data so we're not worried about it being invalidated under us
             // while cleaning things up.
             unsafe {
-                node.as_ref().unbuffer_from_collector();
+                unbuffer_from_trace(node);
             };
 
             filter_live_node_children(graph, child, dead_nodes);
         }
+    }
+}
+
+/// # Safety:
+/// - The caller of this function must not attempt to access self after calling this function.
+unsafe fn unbuffer_from_trace(ptr: NonNull<Inner<dyn Trace>>) {
+    if ptr.as_ref().buffered.get() == Buffered::Trace {
+        ptr.as_ref().buffered.set(Buffered::Unbuffered);
+        ptr.as_ref().decrement_strong_count();
+    } else {
+        // The node was buffered in an old/young gen context.
+        debug_assert_ne!(ptr.as_ref().buffered.get(), Buffered::Unbuffered);
     }
 }
