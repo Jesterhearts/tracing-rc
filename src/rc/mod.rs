@@ -385,11 +385,12 @@ where
     /// self.data must not be dropped.
     #[must_use]
     unsafe fn try_mark_ref_dropped(&self) -> bool {
-        // If someone has an open borrow to data, it cannot be dead.
-        if self.data.try_borrow_mut().is_ok() && self.status.get() == Status::Live {
+        debug_assert_ne!(self.status.get(), Status::Dead);
+        if self.data.try_borrow_mut().is_ok() {
             self.status.set(Status::RecentlyDecremented);
             true
         } else {
+            // If someone has an open borrow to data, it cannot be dead.
             false
         }
     }
