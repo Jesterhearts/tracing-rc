@@ -9,9 +9,10 @@ edition = "2021"
 cargo-fuzz = true
 
 [dependencies]
+arbitrary = { version = '1', features = [ "derive" ] }
+indoc = '^1.0'
 libfuzzer-sys = '0.4'
 petgraph = '^0.6'
-arbitrary = { version = '1', features = [ "derive" ] }
 
 [dependencies.tracing-rc]
 path = ".."

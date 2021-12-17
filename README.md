@@ -15,6 +15,11 @@ which don't have clear lifetimes or ownership.
 - If you have a single type and want to add/remove values, something like
   [generational-arena](https://lib.rs/crates/generational-arena) is probably best.
 
+# Usage of Unsafe
+The library has a single usage of unsafe where it drops its inner data. This unsafe is protected by
+a `borrow_mut` call to a `RefCell` which is intentionally leaked after dropping the data, making the
+inner (dropped) data inaccessible.
+
 # Soundness & Rc Collector Design Considerations
 Because any implementation of the `Trace` trait and custom `Drop` implementations for objects
 owned by a garbage collected pointer can run arbitrary code, they may attempt to create new copies or
@@ -26,7 +31,7 @@ In order for this crate to be sound and present a safe `Trace` trait, the collec
 cause undefined behavior in any of the scenarios outlined. In order to accomplish this, the
 collector does the following:
 1. Items that are waiting for collection or have been visited during tracing are given an extra
-   strong reference to make sure the memory remains allocated and the data it contains remains valid
+   strong or weak reference to make sure the memory remains allocated and the data it contains remains valid
    even if strong references are dropped during traversal.
 2. Reference counts for traced items are not decremented by the collector during traversal (this is
    a difference from e.g. Bacon-Rajan which originally inspired this crate). The collector instead
@@ -44,19 +49,11 @@ collector does the following:
    (immutable or mutable). This drop _does not_ and _can not_ free the memory for the gc pointer,
    nor does it make the reference count or liveness inaccessible. The borrow check ensures that data
    isn't dropped out from underneath active borrows.
-5. After it has completed dropping of the inner data of dead values, the collector re-examines the
-   list of dead values and checks their reference counts. Because gc pointers always decrement their
-   refcount during drop, if the cycle was correctly cleaned up, the only remaining reference count
-   will be the strong ref added by the collector itself. If the collector sees this, it knows that
-   there is no way for safe code to still access the gc pointer and it can safely de-allocate it.
-   
-   If the number of oustanding references has _not_ dropped to zero, the collector leaves the node
-   marked `Dead`, indicating that its inner data has already been dropped, but that the gc pointer
-   itself may still be reachable from safe code. Safe code is prevented from getting a reference to
-   the data stored in a zombie pointer. When a zombie value's refcount reaches zero it is
-   automatically de-allocated, as it is impossible for it to participate in any cycles once its
-   inner data has been dropped.
-
+5. After it has completed dropping of the inner data of dead values, the collector releases its
+   strong/weak reference. If the cycle was broken, that reference will be the last remaining
+   reference to the `Gc` value, and its memory will be cleaned up. If there are remaining
+   references, its memory will be cleaned up when the oustanding references fall out of scope.
+ 
 There are a decent number number of tests designed to exercise each of these scenarios included, and all
 of these tests pass miri (barring leaks for intentionally misbehaved code).
 

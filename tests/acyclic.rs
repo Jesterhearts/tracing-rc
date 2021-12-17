@@ -1,7 +1,7 @@
 use tracing_rc::{
     rc::{
         collect_with_options,
-        collector::count_roots,
+        count_roots,
         Gc,
         GcVisitor,
         Trace,

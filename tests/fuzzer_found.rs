@@ -5,18 +5,19 @@ use tracing_rc::rc::{
     Trace,
 };
 
+#[derive(Default)]
+struct Cycle {
+    neighbors: Vec<Gc<Cycle>>,
+}
+
+impl Trace for Cycle {
+    fn visit_children(&self, visitor: &mut GcVisitor) {
+        self.neighbors.visit_children(visitor);
+    }
+}
+
 #[test]
 fn fuzzfound_leak_01() {
-    struct Cycle {
-        neighbors: Vec<Gc<Cycle>>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.neighbors.visit_children(visitor);
-        }
-    }
-
     // 0
     let a = Gc::new(Cycle { neighbors: vec![] });
     // 1
@@ -83,15 +84,6 @@ fn fuzzfound_leak_02() {
     // is still alive by interleaving checking the buffer status of the node with gc cycles. If
     // we unconditionally mark the node as unbuffered post-collection, we can end up leaking an
     // extra strong count in the destructor when we replace an already buffered young-gen node.
-    struct Cycle {
-        neighbors: Vec<Gc<Cycle>>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.neighbors.visit_children(visitor);
-        }
-    }
 
     // 0
     let a = Gc::new(Cycle { neighbors: vec![] });
@@ -153,15 +145,6 @@ fn fuzzfound_uaf_01() {
     //   node with one parent remaining.
     // if a bug is present in decrementing the reference count during cycle tracing, this will
     // trigger a UAF.
-    struct Cycle {
-        neighbors: Vec<Gc<Cycle>>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.neighbors.visit_children(visitor);
-        }
-    }
 
     // 0
     let a = Gc::new(Cycle { neighbors: vec![] });

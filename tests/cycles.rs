@@ -1,6 +1,6 @@
 use tracing_rc::rc::{
     collect_full,
-    collector::count_roots,
+    count_roots,
     Gc,
     GcVisitor,
     Trace,
@@ -20,12 +20,6 @@ fn mono_simple_cycle() {
 
     let a = Gc::new(Cycle { gc: None });
     a.borrow_mut().gc = Some(a.clone());
-
-    assert_eq!(
-        Gc::strong_count(&a),
-        2,
-        "Node a strong count not incremented"
-    );
 
     drop(a);
 
@@ -62,33 +56,9 @@ fn simple_cycle() {
     // B ref 2, A ref 2
     a.borrow_mut().gc = Some(b.clone());
 
-    assert_eq!(
-        Gc::strong_count(&a),
-        2,
-        "Node a strong count not incremented"
-    );
-
-    assert_eq!(
-        Gc::strong_count(&b),
-        2,
-        "Node b strong count not incremented"
-    );
-
     drop(b);
 
     assert_eq!(count_roots(), 1, "Node b not tracked in roots");
-
-    assert_eq!(
-        Gc::strong_count(&a),
-        2,
-        "Node a strong count decremented by drop of child"
-    );
-
-    assert_eq!(
-        Gc::strong_count(a.borrow().gc.as_ref().unwrap()),
-        2,
-        "Node b strong count not properly handled after drop"
-    );
 
     drop(a);
 

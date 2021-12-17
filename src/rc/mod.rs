@@ -1,18 +1,19 @@
 use std::{
     cell::{
         Cell,
-        Ref,
         RefCell,
-        RefMut,
     },
     marker::PhantomData,
     mem::ManuallyDrop,
-    num::NonZeroUsize,
-    ptr::NonNull,
+    ops::{
+        Deref,
+        DerefMut,
+    },
+    rc::Rc,
 };
 
 /// Collection algorithms for cleaning up dead [`Gc`]s.
-pub mod collector;
+mod collector;
 /// Contains the [`Trace`] trait which must be implemented for items stored in a [`Gc`].
 pub mod trace;
 
@@ -20,16 +21,51 @@ pub use collector::{
     collect,
     collect_full,
     collect_with_options,
+    count_roots,
     GcVisitor,
 };
 use collector::{
-    Node,
-    OLD_GEN,
+    WeakNode,
     YOUNG_GEN,
 };
 pub use trace::Trace;
 
 use crate::Status;
+
+/// Wraps an immutable borrowed reference to a value in a [`Gc`].
+pub struct Ref<'a, T: ?Sized> {
+    cell_ref: std::cell::Ref<'a, ManuallyDrop<T>>,
+}
+
+impl<T: ?Sized> Deref for Ref<'_, T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &T {
+        self.cell_ref.deref().deref()
+    }
+}
+
+/// Wraps a mutable borrowed reference to a value in a [`Gc`].
+pub struct RefMut<'a, T: ?Sized> {
+    cell_ref: std::cell::RefMut<'a, ManuallyDrop<T>>,
+}
+
+impl<T: ?Sized> Deref for RefMut<'_, T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &T {
+        self.cell_ref.deref().deref()
+    }
+}
+
+impl<T: ?Sized> DerefMut for RefMut<'_, T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.cell_ref.deref_mut().deref_mut()
+    }
+}
 
 /// A cycle-collected reference-counted smart pointer.
 ///
@@ -64,7 +100,7 @@ use crate::Status;
 /// - The collector does not make any guarantees about the relative order of drops for dead nodes.
 ///   Even if the order appears stable, you **may not** rely on it for program correctness.
 pub struct Gc<T: Trace + 'static> {
-    ptr: NonNull<Inner<T>>,
+    ptr: Rc<Inner<T>>,
     _t: PhantomData<T>,
 }
 
@@ -81,17 +117,14 @@ impl<T> Gc<T>
 where
     T: Trace + 'static,
 {
-    /// Construct a new Gc containing `data` which will be automatically cleaned up with it is no
+    /// Construct a new `Gc` containing `data` which will be automatically cleaned up with it is no
     /// longer reachable, even in the presence of cyclical references.
     pub fn new(data: T) -> Self {
         Self {
-            ptr: Box::leak(Box::new(Inner {
-                strong: Cell::new(NonZeroUsize::new(1).unwrap()),
+            ptr: Rc::new(Inner {
                 status: Cell::new(Status::Live),
-                buffered: Cell::new(Buffered::Unbuffered),
-                data: ManuallyDrop::new(RefCell::new(data)),
-            }))
-            .into(),
+                data: RefCell::new(ManuallyDrop::new(data)),
+            }),
             _t: PhantomData,
         }
     }
@@ -103,17 +136,17 @@ where
 {
     /// Retrieve the current number of strong references outstanding.
     pub fn strong_count(this: &Self) -> usize {
-        this.get_inner().strong.get().get()
+        Rc::strong_count(&this.ptr)
     }
 
     /// Returns true if the data in Self hasn't been dropped yet. This will almost always be the
     /// case unless it is called inside of a Drop implementation or if there is a bug present in a
     /// Trace impl.
     pub fn is_live(this: &Self) -> bool {
-        this.get_inner().is_live()
+        this.ptr.is_live()
     }
 
-    /// Get a reference into this Gc.
+    /// Get a reference into this `Gc`.
     ///
     /// The borrow of the data ends until the returned `Ref` exists the scope. Multiple immutable
     /// borrows may be taken out at the same time.
@@ -124,21 +157,20 @@ where
         self.try_borrow().unwrap()
     }
 
-    /// Try to get a reference into this Gc.
+    /// Try to get a reference into this `Gc`.
     ///
     /// Returns None if the pointer is dead or immutably borrowed, as the data contained in this
     /// pointer is possibly cleaned up or cannot be aliased.
     pub fn try_borrow(&self) -> Option<Ref<'_, T>> {
-        if self.get_inner().is_live() {
-            self.get_inner().mark_live();
-            // SAFETY: Ptr is nonnull and not dangline and we asserted that self is live.
-            unsafe { (&*self.ptr.as_ref().data).try_borrow().ok() }
+        if let Ok(cell_ref) = self.ptr.data.try_borrow() {
+            self.ptr.mark_live();
+            Some(Ref { cell_ref })
         } else {
             None
         }
     }
 
-    /// Get a mutable reference into this Gc.
+    /// Get a mutable reference into this `Gc`.
     ///
     /// Similar to `RefCell`, the mutable borrow of the data lasts until the returned RefMut or all
     /// RefMuts derived from it exit scope.
@@ -149,14 +181,13 @@ where
         self.try_borrow_mut().unwrap()
     }
 
-    /// Try to get a mutable referenced into this Gc.
+    /// Try to get a mutable referenced into this `Gc`.
     ///
     /// Will return None if there are oustanding borrows, or if the pointer is dead.
     pub fn try_borrow_mut(&self) -> Option<RefMut<'_, T>> {
-        if Self::is_live(self) {
-            self.get_inner().mark_live();
-            // SAFETY: We checked self is still alive.
-            unsafe { (&*self.ptr.as_ref().data).try_borrow_mut().ok() }
+        if let Ok(cell_ref) = self.ptr.data.try_borrow_mut() {
+            self.ptr.mark_live();
+            Some(RefMut { cell_ref })
         } else {
             None
         }
@@ -164,29 +195,12 @@ where
 
     /// Returns true if both this & other point to the same allocation.
     pub fn ptr_eq(this: &Self, other: &Self) -> bool {
-        std::ptr::eq(this.ptr.as_ptr(), other.ptr.as_ptr())
-    }
-}
-
-impl<T> Gc<T>
-where
-    T: Trace + 'static,
-{
-    fn node(&self) -> Node {
-        Node {
-            inner_ptr: self.coerce_inner(),
-        }
+        Rc::ptr_eq(&this.ptr, &other.ptr)
     }
 
-    fn get_inner(&self) -> SafeInnerView<'_> {
-        // SAFETY: Barring bugs in the collector, self.ptr is not dangling and not null. We don't
-        // access inner.data.
-        unsafe { SafeInnerView::from(self.ptr.as_ref()) }
-    }
-
-    fn coerce_inner(&self) -> NonNull<Inner<dyn Trace>> {
-        // SAFETY: Barring bugs in the collector, self.ptr is not dangling and not null.
-        unsafe { NonNull::new_unchecked(self.ptr.as_ptr() as *mut Inner<dyn Trace>) }
+    fn node(&self) -> WeakNode {
+        let inner_ptr = Rc::downgrade(&self.ptr);
+        WeakNode { inner_ptr }
     }
 }
 
@@ -197,20 +211,13 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Gc")
             .field("strong", &format_args!("{}", Self::strong_count(self)))
-            .field(
-                "status",
-                &format_args!("{:?}", self.get_inner().status.get()),
-            )
-            .field(
-                "buffered",
-                &format_args!("{:?}", self.get_inner().buffered.get()),
-            )
+            .field("status", &format_args!("{:?}", self.ptr.status.get()))
             .field(
                 "data",
                 &format_args!(
                     "{:?} @ {:?}",
                     self.try_borrow().map(|_| std::any::type_name::<T>()),
-                    unsafe { self.ptr.as_ref().data.as_ptr() }
+                    self.ptr.data.as_ptr()
                 ),
             )
             .finish()
@@ -222,13 +229,10 @@ where
     T: Trace + 'static,
 {
     fn clone(&self) -> Self {
-        let inner = self.get_inner();
-        inner.mark_live();
-
-        inner.increment_strong_count();
+        self.ptr.mark_live();
 
         Self {
-            ptr: self.ptr,
+            ptr: self.ptr.clone(),
             _t: PhantomData,
         }
     }
@@ -236,46 +240,20 @@ where
 
 impl<T: Trace + 'static> Drop for Gc<T> {
     fn drop(&mut self) {
-        // SAFETY: We do not hold open refs to inner in this scope since it may get de-allocated
-        // later. We only de-allocate if there are no outstanding strong references. We only drop if
-        // the node is dead.
-        unsafe {
-            if self.ptr.as_ref().strong.get() == NonZeroUsize::new(1).unwrap() {
-                // This is the last remaining strong ref to this value so we can
-                // safely drop the inner value and de-allocate the container.
-                Inner::zombie_safe_drop_data_dealloc(self.ptr);
-                return;
-            }
-        }
+        if Rc::strong_count(&self.ptr) == 1 {
+            Inner::drop_data(&self.ptr);
+        } else if self.ptr.status.get() != Status::Dead && self.ptr.try_mark_ref_dropped() {
+            let node = self.node();
 
-        // SAFETY: ptr is not null & not dangling
-        let inner = unsafe { self.ptr.as_ref() };
-        if inner.status.get() == Status::Dead {
-            // SAFETY: We own a strong reference.
-            unsafe { inner.decrement_strong_count() };
-        } else {
-            // SAFETY: We've checked that inner is not dead and can safely touch it.
-            let marked_decref = unsafe { inner.try_mark_ref_dropped() };
-            if marked_decref && inner.buffered.get() == Buffered::Unbuffered {
-                inner.buffered.set(Buffered::YoungGen);
-                let ptr = self.coerce_inner();
-
-                // It's possible that this will turn out to be a member of a cycle, so we need
-                // to add it to the list of items the collector tracks.
-                YOUNG_GEN.with(|gen| {
-                    debug_assert!(OLD_GEN.with(|gen| !gen.borrow().contains(&ptr)));
-
-                    let mut gen = gen.borrow_mut();
-                    // Because we haven't decremented the strong count yet, we can safely just
-                    // add this to the young gen without fear of early
-                    // deletion. It might already be present there, but that's fine.
-                    gen.insert(ptr, 0);
-                });
-            } else {
-                // SAFETY: We own a strong reference & we know that the either the collector is
-                // tracking the value or someone else is.
-                unsafe { inner.decrement_strong_count() }
-            }
+            // It's possible that this will turn out to be a member of a cycle, so we need
+            // to add it to the list of items the collector tracks.
+            YOUNG_GEN.with(|gen| {
+                let mut gen = gen.borrow_mut();
+                // Because we haven't decremented the strong count yet, we can safely just
+                // add this to the young gen without fear of early
+                // deletion. It might already be present there, but that's fine.
+                gen.insert(node, 0);
+            });
         }
     }
 }
@@ -309,44 +287,42 @@ where
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Buffered {
-    Unbuffered,
-    YoungGen,
-    OldGen,
-    Trace,
+pub(crate) struct Inner<T: Trace + ?Sized> {
+    status: Cell<Status>,
+    data: RefCell<ManuallyDrop<T>>,
 }
 
-#[derive(Debug)]
-struct SafeInnerView<'v> {
-    strong: &'v Cell<NonZeroUsize>,
-    status: &'v Cell<Status>,
-    buffered: &'v Cell<Buffered>,
-}
-
-impl<'v, T> From<&'v Inner<T>> for SafeInnerView<'v>
+impl<T> std::fmt::Debug for Inner<T>
 where
-    T: ?Sized + Trace,
+    T: Trace + ?Sized,
 {
-    fn from(inner: &'v Inner<T>) -> Self {
-        SafeInnerView {
-            strong: &inner.strong,
-            status: &inner.status,
-            buffered: &inner.buffered,
-        }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Inner")
+            .field("status", &self.status)
+            .field(
+                "data",
+                &format_args!("{} @ {:?}", std::any::type_name::<T>(), self.data.as_ptr()),
+            )
+            .finish()
     }
 }
 
-impl SafeInnerView<'_> {
-    fn increment_strong_count(&self) {
-        self.strong.set(
-            self.strong
-                .get()
-                .get()
-                .checked_add(1)
-                .and_then(NonZeroUsize::new)
-                .expect("Strong count overflowed"),
-        );
+impl<T> Inner<T>
+where
+    T: Trace + ?Sized,
+{
+    fn drop_data(ptr: &Rc<Self>) {
+        if let Ok(mut mut_borrow) = ptr.data.try_borrow_mut() {
+            ptr.status.set(Status::Dead);
+
+            // SAFETY: During drop of the data, we forget a mut borrow of it, which bans all access
+            // to the data afterwards. If we're able to reach here, we're the last
+            // mutable borrower.
+            unsafe { ManuallyDrop::drop(&mut mut_borrow) };
+
+            // TODO: Once RefMut::leak is stable, use that here.
+            std::mem::forget(mut_borrow);
+        }
     }
 
     fn is_live(&self) -> bool {
@@ -361,94 +337,14 @@ impl SafeInnerView<'_> {
             self.status.set(Status::Live);
         }
     }
-}
 
-struct Inner<T: Trace + ?Sized> {
-    strong: Cell<NonZeroUsize>,
-    status: Cell<Status>,
-    buffered: Cell<Buffered>,
-    data: ManuallyDrop<RefCell<T>>,
-}
-
-impl<T> std::fmt::Debug for Inner<T>
-where
-    T: Trace + ?Sized,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Inner")
-            .field("strong", &self.strong)
-            .field("status", &self.status)
-            .field("buffered", &self.buffered)
-            .field(
-                "data",
-                &format_args!("{} @ {:?}", std::any::type_name::<T>(), self.data.as_ptr()),
-            )
-            .finish()
-    }
-}
-
-impl<T> Inner<T>
-where
-    T: Trace + ?Sized,
-{
-    /// # Safety:
-    /// - ptr.data must not have been dropped.
-    /// - ptr.data must not have any aliasing borrows.
-    unsafe fn drop_data(ptr: NonNull<Self>) {
-        debug_assert!(ptr.as_ref().data.try_borrow_mut().is_ok());
-
-        ManuallyDrop::drop(&mut (*ptr.as_ptr()).data);
-    }
-
-    /// # Safety:
-    /// - ptr must not have been deallocated.
-    /// - ptr must have been created by [`Box::into_raw`] or [`Box::leak`]
-    /// - ptr must not be reachable from safe code.
-    unsafe fn dealloc(ptr: NonNull<Self>) {
-        debug_assert_eq!(ptr.as_ref().strong.get().get(), 1);
-
-        let boxed = Box::from_raw(ptr.as_ptr());
-        drop(boxed);
-    }
-
-    unsafe fn zombie_safe_drop_data_dealloc(ptr: NonNull<Self>) {
-        if ptr.as_ref().status.get() != Status::Dead {
-            Self::drop_data(ptr);
-        }
-
-        Self::dealloc(ptr);
-    }
-
-    /// # Safety:
-    /// self.data must not be dropped.
     #[must_use]
-    unsafe fn try_mark_ref_dropped(&self) -> bool {
-        debug_assert_ne!(self.status.get(), Status::Dead);
+    fn try_mark_ref_dropped(&self) -> bool {
         if self.data.try_borrow_mut().is_ok() {
             self.status.set(Status::RecentlyDecremented);
             true
         } else {
             // If someone has an open borrow to data, it cannot be dead.
-            false
-        }
-    }
-
-    /// # Safety:
-    /// - The caller of this function must not attempt to access self after calling this function.
-    unsafe fn decrement_strong_count(&self) {
-        self.strong.set(
-            NonZeroUsize::new(self.strong.get().get() - 1).expect("Underflow in strong count"),
-        );
-    }
-
-    /// Attempts to mark the node dead if it is possible to get exclusive access to data. This will
-    /// not always be true in the presense of buggy Trace implementations.
-    #[must_use]
-    fn try_mark_dead(&self) -> bool {
-        if self.data.try_borrow_mut().is_ok() {
-            self.status.set(Status::Dead);
-            true
-        } else {
             false
         }
     }

@@ -178,6 +178,10 @@ empty_trace!(u8, u16, u32, u64, usize, u128);
 empty_trace!(bool, char);
 empty_trace!(std::string::String);
 
+impl Trace for () {
+    fn visit_children(&self, _: &mut GcVisitor) {}
+}
+
 impl<T: Trace> Trace for std::cell::RefCell<T> {
     fn visit_children(&self, visitor: &mut GcVisitor) {
         T::visit_children(&self.borrow(), visitor);
