@@ -71,6 +71,7 @@ pub mod rc;
 
 /// Controls the style of collection carried out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CollectionType {
     /// Do a simple pass over the young gen, collecting non-cyclical pointers
     /// and moving old pointers to the old gen. Then perform a cycle-tracing
@@ -89,6 +90,7 @@ impl Default for CollectionType {
 
 /// Provides settings which control how cycle-collection is performed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CollectOptions {
     /// The number of times a pointer may be seen in the young gen before moving it to the old
     /// gen for a full tracing collection. Setting this to zero will cause all pointers to move to

@@ -3,7 +3,6 @@ use std::{
         Cell,
         RefCell,
     },
-    marker::PhantomData,
     mem::ManuallyDrop,
     ops::{
         Deref,
@@ -101,7 +100,6 @@ impl<T: ?Sized> DerefMut for RefMut<'_, T> {
 ///   Even if the order appears stable, you **may not** rely on it for program correctness.
 pub struct Gc<T: Trace + 'static> {
     ptr: Rc<Inner<T>>,
-    _t: PhantomData<T>,
 }
 
 impl<T> Trace for Gc<T>
@@ -125,7 +123,6 @@ where
                 status: Cell::new(Status::Live),
                 data: RefCell::new(ManuallyDrop::new(data)),
             }),
-            _t: PhantomData,
         }
     }
 }
@@ -233,7 +230,6 @@ where
 
         Self {
             ptr: self.ptr.clone(),
-            _t: PhantomData,
         }
     }
 }

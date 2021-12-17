@@ -153,7 +153,7 @@ pub fn collect() {
     collect_with_options(CollectOptions::default());
 }
 
-/// Perform a collection cycle based on `CollectionOptions`.
+/// Perform a collection cycle based on [`CollectOptions`].
 pub fn collect_with_options(options: CollectOptions) {
     collect_new_gen(options);
     if options.kind != CollectionType::YoungOnly {
@@ -247,7 +247,7 @@ fn collect_old_gen() {
     }
 
     for (_, node_ix) in dead_nodes {
-        Inner::drop_data(&connectivity_graph[node_ix])
+        Inner::drop_data(&connectivity_graph[node_ix]);
     }
 }
 
