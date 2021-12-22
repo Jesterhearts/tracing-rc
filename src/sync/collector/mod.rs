@@ -1,69 +1,92 @@
 use std::{
-    cell::RefCell,
-    collections::HashMap,
+    collections::{
+        HashMap,
+        VecDeque,
+    },
     num::NonZeroUsize,
     ops::Deref,
-    rc::{
-        Rc,
+    sync::{
+        Arc,
         Weak,
     },
 };
 
-use indexmap::{
-    IndexMap,
-    IndexSet,
+use atomic::Ordering;
+use dashmap::{
+    DashMap,
+    DashSet,
+};
+use indexmap::IndexMap;
+use once_cell::sync::Lazy;
+use parking_lot::{
+    const_mutex,
+    Mutex,
 };
 use petgraph::{
     csr::{
         Csr,
         NodeIndex,
     },
-    visit::IntoNodeReferences,
+    visit::{
+        IntoNodeIdentifiers,
+        IntoNodeReferences,
+    },
     Directed,
 };
 
 use crate::{
     impl_node,
-    rc::{
-        trace::Trace,
-        Gc,
-        Inner,
+    sync::{
+        Agc,
+        AtomicInner,
         Status,
+        Trace,
     },
     CollectOptions,
     CollectionType,
 };
 
-impl_node!(WeakNode { inner_ptr: Weak<Inner<dyn Trace>> }, upgrade(ptr) => Weak::upgrade(ptr));
-impl_node!(StrongNode { inner_ptr: Rc<Inner<dyn Trace>> }, upgrade(ptr) => ptr);
+impl_node!(WeakNode { inner_ptr: Weak<AtomicInner<dyn Trace>> }, upgrade(ptr) => Weak::upgrade(ptr));
+impl_node!(StrongNode { inner_ptr: Arc<AtomicInner<dyn Trace>> }, upgrade(ptr) => ptr);
 
-impl From<WeakNode> for Option<StrongNode> {
-    fn from(weak: WeakNode) -> Self {
+impl TryFrom<&WeakNode> for StrongNode {
+    type Error = ();
+
+    fn try_from(weak: &WeakNode) -> Result<Self, Self::Error> {
         weak.upgrade()
             .map(|strong| StrongNode { inner_ptr: strong })
+            .ok_or(())
     }
 }
 
+static YOUNG_GEN: Lazy<DashMap<WeakNode, usize>> = Lazy::new(DashMap::default);
+static OLD_GEN: Lazy<DashSet<WeakNode>> = Lazy::new(DashSet::default);
+
+static COLLECTION_MUTEX: Mutex<()> = const_mutex(());
+
 #[derive(Debug, Clone, Copy)]
-struct NodeKey(*const Inner<dyn Trace>);
+struct NodeKey(*const AtomicInner<dyn Trace>);
 
 impl std::hash::Hash for NodeKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_usize(self.0 as *const Inner<()> as usize)
+        state.write_usize(self.0 as *const AtomicInner<()> as usize)
     }
 }
 
 impl PartialEq for NodeKey {
     fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.0 as *const Inner<()>, other.0 as *const Inner<()>)
+        std::ptr::eq(
+            self.0 as *const AtomicInner<()>,
+            other.0 as *const AtomicInner<()>,
+        )
     }
 }
 
 impl Eq for NodeKey {}
 
-impl From<&Rc<Inner<dyn Trace>>> for NodeKey {
-    fn from(rc: &Rc<Inner<dyn Trace>>) -> Self {
-        Self(Rc::as_ptr(rc))
+impl From<&Arc<AtomicInner<dyn Trace>>> for NodeKey {
+    fn from(rc: &Arc<AtomicInner<dyn Trace>>) -> Self {
+        Self(Arc::as_ptr(rc))
     }
 }
 
@@ -71,12 +94,12 @@ impl From<&Rc<Inner<dyn Trace>>> for NodeKey {
 /// with this as [`Gc::visit_children`] will do the right thing for you, but you may call
 /// [`Self::visit_node`] if you prefer.
 pub struct GcVisitor<'cycle> {
-    visitor: &'cycle mut dyn FnMut(Rc<Inner<dyn Trace>>),
+    visitor: &'cycle mut dyn FnMut(Arc<AtomicInner<dyn Trace>>),
 }
 
 impl GcVisitor<'_> {
     /// Visit an owned [Gc] node.
-    pub fn visit_node<T: Trace + 'static>(&mut self, node: &Gc<T>) {
+    pub fn visit_node<T: Trace + 'static>(&mut self, node: &Agc<T>) {
         (self.visitor)(node.ptr.clone());
     }
 }
@@ -86,14 +109,6 @@ type GraphIndex = NodeIndex<usize>;
 type ConnectivityGraph = Csr<StrongNode, (), Directed, GraphIndex>;
 
 type TracedNodeList = IndexMap<NodeKey, NonZeroUsize>;
-
-thread_local! { pub(super) static OLD_GEN: RefCell<IndexSet<WeakNode>> = RefCell::new(IndexSet::default()) }
-thread_local! { pub(super) static YOUNG_GEN: RefCell<IndexMap<WeakNode, usize>> = RefCell::new(IndexMap::default()) }
-
-#[doc(hidden)]
-pub fn count_roots() -> usize {
-    OLD_GEN.with(|old| old.borrow().len()) + YOUNG_GEN.with(|young| young.borrow().len())
-}
 
 /// Perform a full, cycle-tracing collection of both the old & young gen.
 pub fn collect_full() {
@@ -114,42 +129,47 @@ pub fn collect_with_options(options: CollectOptions) {
 }
 
 fn collect_new_gen(options: CollectOptions) {
-    OLD_GEN.with(|old_gen| {
-        let mut old_gen = old_gen.borrow_mut();
-        YOUNG_GEN.with(|gen| {
-            gen.borrow_mut().retain(|node, generation| {
-                let strong_node = if let Some(node) = node.upgrade() {
-                    node
-                } else {
-                    return false;
-                };
-                if strong_node.status.get() != Status::RecentlyDecremented {
-                    // It is alive or dead, either way we won't need to trace its children.
-                    // If it's alive, we'll get another chance to clean it up.
-                    // If it's dead, it can't have children so the destructor should handle
-                    // cleanup eventually.
-                    return false;
-                }
+    let mut to_old_gen = vec![];
+    YOUNG_GEN.retain(|node, generation| {
+        let strong_node = if let Some(node) = node.upgrade() {
+            node
+        } else {
+            return false;
+        };
 
-                if *generation < options.old_gen_threshold {
-                    *generation += 1;
-                    return true;
-                }
+        // Relaxed ordering is fine here because all this does is save us work.
+        if strong_node.status.load(Ordering::Relaxed) == Status::Live {
+            return false;
+        }
 
-                old_gen.insert(node.clone());
-                false
-            });
-        });
+        if *generation < options.old_gen_threshold {
+            *generation += 1;
+            return true;
+        }
+
+        to_old_gen.push(node.clone());
+        false
     });
+
+    for node in to_old_gen {
+        OLD_GEN.insert(node);
+    }
 }
 
 fn collect_old_gen() {
-    let mut connectivity_graph = OLD_GEN.with(|old_gen| {
-        let mut graph = ConnectivityGraph::default();
-        for node in old_gen.borrow_mut().drain(..).filter_map(WeakNode::into) {
-            graph.add_node(node);
+    let _guard = if let Some(guard) = COLLECTION_MUTEX.try_lock() {
+        guard
+    } else {
+        // Some other thread is running collection on the old gen.
+        return;
+    };
+
+    let mut connectivity_graph = ConnectivityGraph::default();
+    OLD_GEN.retain(|node| {
+        if let Ok(strong) = node.try_into() {
+            connectivity_graph.add_node(strong);
         }
-        graph
+        false
     });
 
     let mut traced_nodes = connectivity_graph
@@ -157,11 +177,15 @@ fn collect_old_gen() {
         .map(|(_, node)| (NodeKey::from(node.deref()), NonZeroUsize::new(1).unwrap()))
         .collect();
 
-    // Iterate over all nodes reachable from the old gen tracking them in the list of all
-    // traced nodes.
-    // We iterate over the initial list of nodes here, since all new nodes are added afterwards.
-    for node_ix in (0..connectivity_graph.node_count()).map(GraphIndex::from) {
-        match connectivity_graph[node_ix].status.get() {
+    let mut pending_nodes = connectivity_graph
+        .node_identifiers()
+        .collect::<VecDeque<_>>();
+
+    while let Some(node_ix) = pending_nodes.pop_front() {
+        match connectivity_graph[node_ix]
+            .status
+            .load(atomic::Ordering::Acquire)
+        {
             Status::Live | Status::Dead => {
                 // We'll collect it later if it a new strong reference was created and added
                 // to a now dead cycle before being collected. We don't really have any work
@@ -169,21 +193,29 @@ fn collect_old_gen() {
                 // Dead nodes can be here if a buggy trace implementation or bad drop behavior
                 // caused a node to be improperly cleaned up.
             }
-            Status::RecentlyDecremented => {
-                // This node had a strong ref dropped recently and might form a cycle, trace
-                // it
-                trace_children(node_ix, &mut traced_nodes, &mut connectivity_graph);
+            Status::Traced | Status::RecentlyDecremented => {
+                // This node or its parent had a strong ref dropped recently and might form a cycle,
+                // trace it
+                trace_children(
+                    node_ix,
+                    &mut pending_nodes,
+                    &mut traced_nodes,
+                    &mut connectivity_graph,
+                );
             }
         }
     }
 
     let mut live_nodes = vec![];
+    let mut dirty_nodes = vec![];
     let mut dead_nodes = HashMap::default();
 
     for (node_ix, (key, refs)) in traced_nodes.into_iter().enumerate() {
         let node = &connectivity_graph[node_ix];
-        if Rc::strong_count(node) > refs.get() {
+        if Arc::strong_count(node) > refs.get() {
             live_nodes.push(node_ix);
+        } else if node.status.load(atomic::Ordering::Acquire) != Status::Traced {
+            dirty_nodes.push(node_ix);
         } else {
             dead_nodes.insert(key, node_ix);
         }
@@ -193,35 +225,40 @@ fn collect_old_gen() {
         filter_live_node_children(&connectivity_graph, node_index, &mut dead_nodes);
     }
 
+    for node_index in dirty_nodes {
+        filter_live_node_children(&connectivity_graph, node_index, &mut dead_nodes);
+    }
+
     for &node_ix in dead_nodes.values() {
-        connectivity_graph[node_ix].status.set(Status::Dead);
+        connectivity_graph[node_ix]
+            .status
+            .store(Status::Dead, atomic::Ordering::Release);
     }
 
     for (_, node_ix) in dead_nodes {
-        Inner::drop_data(&connectivity_graph[node_ix]);
+        AtomicInner::drop_data(&connectivity_graph[node_ix]);
     }
 }
 
 fn trace_children(
     parent_ix: GraphIndex,
+    pending_nodes: &mut VecDeque<GraphIndex>,
     traced_nodes: &mut TracedNodeList,
     connectivity_graph: &mut ConnectivityGraph,
 ) {
     let pin_parent = connectivity_graph[parent_ix].clone();
-    let parent = if let Ok(parent) = pin_parent.data.try_borrow_mut() {
+    let parent = if let Some(parent) = pin_parent.data.try_write() {
         parent
     } else {
-        // If we can't get mutable access to child, it must be exclusively borrowed by somebody
-        // somewhere on the stack or from within this trace implementation.
+        // If we can't get exclusive access to child, it must be locked by some active thread.
         //
-        // If it's our borrow, we're already visiting that nodes children, so there's no reason for
-        // us to do so again.
-        //
-        // If it's someone else, it must be live and not visiting its
-        // children will undercount any nodes it owns, which is guaranteed to prevent us
-        // from deciding those nodes are dead.
+        // It must be live and not visiting its children will undercount any nodes it owns, which is
+        // guaranteed to prevent us from deciding those nodes are dead.
         return;
     };
+    pin_parent
+        .status
+        .store(Status::Traced, atomic::Ordering::Release);
 
     parent.visit_children(&mut GcVisitor {
         visitor: &mut |node| {
@@ -250,7 +287,7 @@ fn trace_children(
                 }
             };
 
-            trace_children(child_ix, traced_nodes, connectivity_graph);
+            pending_nodes.push_back(child_ix);
         },
     });
 }
