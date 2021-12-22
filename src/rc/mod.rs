@@ -345,3 +345,36 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        cell::{
+            BorrowError,
+            Cell,
+            RefCell,
+        },
+        mem::ManuallyDrop,
+        rc::Rc,
+    };
+
+    use pretty_assertions::assert_eq;
+
+    use crate::{
+        rc::Inner,
+        Status,
+    };
+
+    #[test]
+    fn data_inaccessible_post_drop() {
+        let inner = Rc::new(Inner {
+            status: Cell::new(Status::Live),
+            data: RefCell::new(ManuallyDrop::new(())),
+        });
+
+        Inner::drop_data(&inner);
+
+        assert!(matches!(inner.data.try_borrow(), Err(BorrowError { .. })));
+        assert_eq!(inner.status.get(), Status::Dead);
+    }
+}
