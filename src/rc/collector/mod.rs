@@ -200,11 +200,10 @@ fn collect_old_gen() {
         graph
     });
 
-    let mut traced_nodes = TracedNodeList::with_capacity(connectivity_graph.node_count());
-
-    for (_, node) in connectivity_graph.node_references() {
-        traced_nodes.insert(NodeKey::from(node.deref()), NonZeroUsize::new(1).unwrap());
-    }
+    let mut traced_nodes = connectivity_graph
+        .node_references()
+        .map(|(_, node)| (NodeKey::from(node.deref()), NonZeroUsize::new(1).unwrap()))
+        .collect();
 
     // Iterate over all nodes reachable from the old gen tracking them in the list of all
     // traced nodes.
