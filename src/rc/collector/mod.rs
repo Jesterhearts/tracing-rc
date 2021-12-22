@@ -83,10 +83,13 @@ pub(crate) struct StrongNode {
     pub(super) inner_ptr: Rc<Inner<dyn Trace>>,
 }
 
-impl From<WeakNode> for Option<StrongNode> {
-    fn from(weak: WeakNode) -> Self {
+impl TryFrom<WeakNode> for StrongNode {
+    type Error = ();
+
+    fn try_from(weak: WeakNode) -> Result<Self, Self::Error> {
         weak.upgrade()
             .map(|strong| StrongNode { inner_ptr: strong })
+            .ok_or(())
     }
 }
 
@@ -194,7 +197,11 @@ fn collect_new_gen(options: CollectOptions) {
 fn collect_old_gen() {
     let mut connectivity_graph = OLD_GEN.with(|old_gen| {
         let mut graph = ConnectivityGraph::default();
-        for node in old_gen.borrow_mut().drain(..).filter_map(WeakNode::into) {
+        for node in old_gen
+            .borrow_mut()
+            .drain(..)
+            .filter_map(|weak| weak.try_into().ok())
+        {
             graph.add_node(node);
         }
         graph
