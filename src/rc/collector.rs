@@ -18,7 +18,6 @@ use petgraph::{
         Csr,
         NodeIndex,
     },
-    visit::IntoNodeReferences,
     Directed,
 };
 
@@ -47,6 +46,12 @@ macro_rules! impl_node {
             }
         }
 
+        impl From<$inner<Inner<dyn Trace>>> for $name {
+            fn from(ptr: $inner<Inner<dyn Trace>>) -> Self {
+                Self { inner_ptr: ptr }
+            }
+        }
+
         impl Deref for $name {
             type Target = $inner<Inner<dyn Trace>>;
 
@@ -63,7 +68,10 @@ macro_rules! impl_node {
 
         impl PartialEq for $name {
             fn eq(&self, other: &Self) -> bool {
-                $inner::ptr_eq(&self.inner_ptr, &other.inner_ptr)
+                std::ptr::eq(
+                    $inner::as_ptr(&self.inner_ptr) as *const Inner<()>,
+                    $inner::as_ptr(&other.inner_ptr) as *const Inner<()>,
+                )
             }
         }
 
@@ -134,9 +142,9 @@ impl GcVisitor<'_> {
 
 type GraphIndex = NodeIndex<usize>;
 
-type ConnectivityGraph = Csr<StrongNode, (), Directed, GraphIndex>;
+type ConnectivityGraph = Csr<(), (), Directed, GraphIndex>;
 
-type TracedNodeList = IndexMap<NodeKey, NonZeroUsize>;
+type TracedNodeList = IndexMap<StrongNode, NonZeroUsize>;
 
 thread_local! { pub(super) static OLD_GEN: RefCell<IndexSet<WeakNode>> = RefCell::new(IndexSet::default()) }
 thread_local! { pub(super) static YOUNG_GEN: RefCell<IndexMap<WeakNode, usize>> = RefCell::new(IndexMap::default()) }
@@ -195,28 +203,25 @@ fn collect_new_gen(options: CollectOptions) {
 }
 
 fn collect_old_gen() {
-    let mut connectivity_graph = OLD_GEN.with(|old_gen| {
-        let mut graph = ConnectivityGraph::default();
-        for node in old_gen
+    let mut traced_nodes: TracedNodeList = OLD_GEN.with(|old_gen| {
+        old_gen
             .borrow_mut()
             .drain(..)
-            .filter_map(|weak| weak.try_into().ok())
-        {
-            graph.add_node(node);
-        }
-        graph
+            .filter_map(|weak| {
+                weak.try_into()
+                    .ok()
+                    .map(|strong| (strong, NonZeroUsize::new(1).unwrap()))
+            })
+            .collect()
     });
 
-    let mut traced_nodes = connectivity_graph
-        .node_references()
-        .map(|(_, node)| (NodeKey::from(node.deref()), NonZeroUsize::new(1).unwrap()))
-        .collect();
+    let mut connectivity_graph = ConnectivityGraph::with_nodes(traced_nodes.len());
 
     // Iterate over all nodes reachable from the old gen tracking them in the list of all
     // traced nodes.
     // We iterate over the initial list of nodes here, since all new nodes are added afterwards.
     for node_ix in (0..connectivity_graph.node_count()).map(GraphIndex::from) {
-        match connectivity_graph[node_ix].status.get() {
+        match traced_nodes.get_index(node_ix).unwrap().0.status.get() {
             Status::Live | Status::Dead => {
                 // We'll collect it later if it a new strong reference was created and added
                 // to a now dead cycle before being collected. We don't really have any work
@@ -235,12 +240,11 @@ fn collect_old_gen() {
     let mut live_nodes = vec![];
     let mut dead_nodes = HashMap::default();
 
-    for (node_ix, (key, refs)) in traced_nodes.into_iter().enumerate() {
-        let node = &connectivity_graph[node_ix];
-        if Rc::strong_count(node) > refs.get() {
+    for (node_ix, (node, refs)) in traced_nodes.into_iter().enumerate() {
+        if Rc::strong_count(&node) > refs.get() {
             live_nodes.push(node_ix);
         } else {
-            dead_nodes.insert(key, node_ix);
+            dead_nodes.insert(node_ix, node);
         }
     }
 
@@ -248,12 +252,12 @@ fn collect_old_gen() {
         filter_live_node_children(&connectivity_graph, node_index, &mut dead_nodes);
     }
 
-    for &node_ix in dead_nodes.values() {
-        connectivity_graph[node_ix].status.set(Status::Dead);
+    for node in dead_nodes.values() {
+        node.status.set(Status::Dead);
     }
 
-    for (_, node_ix) in dead_nodes {
-        Inner::drop_data(&connectivity_graph[node_ix]);
+    for (_, node) in dead_nodes {
+        Inner::drop_data(&node);
     }
 }
 
@@ -262,7 +266,7 @@ fn trace_children(
     traced_nodes: &mut TracedNodeList,
     connectivity_graph: &mut ConnectivityGraph,
 ) {
-    let pin_parent = connectivity_graph[parent_ix].clone();
+    let pin_parent = traced_nodes.get_index(parent_ix).unwrap().0.clone();
     let parent = if let Ok(parent) = pin_parent.data.try_borrow_mut() {
         parent
     } else {
@@ -280,7 +284,7 @@ fn trace_children(
 
     parent.visit_children(&mut GcVisitor {
         visitor: &mut |node| {
-            let child_ix = match traced_nodes.entry(NodeKey::from(&node)) {
+            match traced_nodes.entry(node.into()) {
                 indexmap::map::Entry::Occupied(mut seen) => {
                     // We've already seen this node. We do a saturating add because it's ok to
                     // undercount references here and usize::max references is kind of a degenerate
@@ -288,24 +292,19 @@ fn trace_children(
                     *seen.get_mut() =
                         NonZeroUsize::new(seen.get().get().saturating_add(1)).unwrap();
 
-                    connectivity_graph.add_edge(
-                        parent_ix,
-                        traced_nodes.get_index_of(&NodeKey::from(&node)).unwrap(),
-                        (),
-                    );
-                    return;
+                    connectivity_graph.add_edge(parent_ix, seen.index(), ());
                 }
                 indexmap::map::Entry::Vacant(unseen) => {
-                    let child_ix = connectivity_graph.add_node(StrongNode { inner_ptr: node });
-                    // 1 for the graph strong reference, 1 for the seen reference.
-                    unseen.insert(NonZeroUsize::new(2).unwrap());
+                    let child_ix = connectivity_graph.add_node(());
+                    debug_assert_eq!(child_ix, unseen.index());
+
                     connectivity_graph.add_edge(parent_ix, child_ix, ());
 
-                    child_ix
+                    // 1 for the graph strong reference, 1 for the seen reference.
+                    unseen.insert(NonZeroUsize::new(2).unwrap());
+                    trace_children(child_ix, traced_nodes, connectivity_graph);
                 }
             };
-
-            trace_children(child_ix, traced_nodes, connectivity_graph);
         },
     });
 }
@@ -313,14 +312,11 @@ fn trace_children(
 fn filter_live_node_children(
     graph: &ConnectivityGraph,
     node: GraphIndex,
-    dead_nodes: &mut HashMap<NodeKey, GraphIndex>,
+    dead_nodes: &mut HashMap<GraphIndex, StrongNode>,
 ) {
-    for &child in graph.neighbors_slice(node) {
-        if dead_nodes
-            .remove(&NodeKey::from(graph[child].deref()))
-            .is_some()
-        {
-            filter_live_node_children(graph, child, dead_nodes);
+    for child in graph.neighbors_slice(node) {
+        if dead_nodes.remove(child).is_some() {
+            filter_live_node_children(graph, *child, dead_nodes);
         }
     }
 }
