@@ -4,7 +4,6 @@ use std::{
         VecDeque,
     },
     num::NonZeroUsize,
-    ops::Deref,
     sync::{
         Arc,
         Weak,
@@ -27,10 +26,7 @@ use petgraph::{
         Csr,
         NodeIndex,
     },
-    visit::{
-        IntoNodeIdentifiers,
-        IntoNodeReferences,
-    },
+    visit::IntoNodeIdentifiers,
     Directed,
 };
 
@@ -64,32 +60,6 @@ static OLD_GEN: Lazy<DashSet<WeakNode>> = Lazy::new(DashSet::default);
 
 static COLLECTION_MUTEX: Mutex<()> = const_mutex(());
 
-#[derive(Debug, Clone, Copy)]
-struct NodeKey(*const AtomicInner<dyn Trace>);
-
-impl std::hash::Hash for NodeKey {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_usize(self.0 as *const AtomicInner<()> as usize)
-    }
-}
-
-impl PartialEq for NodeKey {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(
-            self.0 as *const AtomicInner<()>,
-            other.0 as *const AtomicInner<()>,
-        )
-    }
-}
-
-impl Eq for NodeKey {}
-
-impl From<&Arc<AtomicInner<dyn Trace>>> for NodeKey {
-    fn from(rc: &Arc<AtomicInner<dyn Trace>>) -> Self {
-        Self(Arc::as_ptr(rc))
-    }
-}
-
 /// Visitor provided during tracing of the reachable object graph. You shouldn't need to interact
 /// with this as [`Gc::visit_children`] will do the right thing for you, but you may call
 /// [`Self::visit_node`] if you prefer.
@@ -106,9 +76,9 @@ impl GcVisitor<'_> {
 
 type GraphIndex = NodeIndex<usize>;
 
-type ConnectivityGraph = Csr<StrongNode, (), Directed, GraphIndex>;
+type ConnectivityGraph = Csr<(), (), Directed, GraphIndex>;
 
-type TracedNodeList = IndexMap<NodeKey, NonZeroUsize>;
+type TracedNodeList = IndexMap<StrongNode, NonZeroUsize>;
 
 /// Perform a full, cycle-tracing collection of both the old & young gen.
 pub fn collect_full() {
@@ -164,60 +134,50 @@ fn collect_old_gen() {
         return;
     };
 
-    let mut connectivity_graph = ConnectivityGraph::default();
+    let mut traced_nodes = IndexMap::with_capacity(OLD_GEN.len());
     OLD_GEN.retain(|node| {
-        if let Ok(strong) = node.try_into() {
-            connectivity_graph.add_node(strong);
+        if let Ok(strong) = TryInto::<StrongNode>::try_into(node) {
+            if strong.status.load(atomic::Ordering::Acquire) == Status::RecentlyDecremented {
+                traced_nodes.insert(strong, NonZeroUsize::new(1).unwrap());
+            }
         }
         false
     });
 
-    let mut traced_nodes = connectivity_graph
-        .node_references()
-        .map(|(_, node)| (NodeKey::from(node.deref()), NonZeroUsize::new(1).unwrap()))
-        .collect();
+    let mut connectivity_graph = ConnectivityGraph::with_nodes(traced_nodes.len());
 
     let mut pending_nodes = connectivity_graph
         .node_identifiers()
         .collect::<VecDeque<_>>();
 
     while let Some(node_ix) = pending_nodes.pop_front() {
-        match connectivity_graph[node_ix]
-            .status
-            .load(atomic::Ordering::Acquire)
-        {
-            Status::Live | Status::Dead => {
-                // We'll collect it later if it a new strong reference was created and added
-                // to a now dead cycle before being collected. We don't really have any work
-                // to do here otherwise.
-                // Dead nodes can be here if a buggy trace implementation or bad drop behavior
-                // caused a node to be improperly cleaned up.
-            }
-            Status::Traced | Status::RecentlyDecremented => {
-                // This node or its parent had a strong ref dropped recently and might form a cycle,
-                // trace it
-                trace_children(
-                    node_ix,
-                    &mut pending_nodes,
-                    &mut traced_nodes,
-                    &mut connectivity_graph,
-                );
-            }
-        }
+        trace_children(
+            node_ix,
+            &mut pending_nodes,
+            &mut traced_nodes,
+            &mut connectivity_graph,
+        );
     }
 
     let mut live_nodes = vec![];
-    let mut dirty_nodes = vec![];
     let mut dead_nodes = HashMap::default();
 
-    for (node_ix, (key, refs)) in traced_nodes.into_iter().enumerate() {
-        let node = &connectivity_graph[node_ix];
-        if Arc::strong_count(node) > refs.get() {
+    for (node_ix, (node, refs)) in traced_nodes.into_iter().enumerate() {
+        if Arc::strong_count(&node) > refs.get()
+            || node.status.load(atomic::Ordering::Acquire) != Status::Traced
+        {
+            // Even if this node becomes dead between the read of the strong count above and the
+            // cmp/mark as live, we won't leak memory as the node will get added to the
+            // young gen.
+            //
+            // Alternatively, this node may be dead, but something accessed it internals between
+            // the time we traced its children and now. We can't know if the child graph
+            // is still the same, so we can't attempt to drop its children. If the node became dead
+            // between tracing and access to its children, the node will end up placed in the young
+            // gen and can be collected later.
             live_nodes.push(node_ix);
-        } else if node.status.load(atomic::Ordering::Acquire) != Status::Traced {
-            dirty_nodes.push(node_ix);
         } else {
-            dead_nodes.insert(key, node_ix);
+            dead_nodes.insert(node_ix, node);
         }
     }
 
@@ -225,18 +185,12 @@ fn collect_old_gen() {
         filter_live_node_children(&connectivity_graph, node_index, &mut dead_nodes);
     }
 
-    for node_index in dirty_nodes {
-        filter_live_node_children(&connectivity_graph, node_index, &mut dead_nodes);
+    for node in dead_nodes.values() {
+        node.status.store(Status::Dead, atomic::Ordering::Release);
     }
 
-    for &node_ix in dead_nodes.values() {
-        connectivity_graph[node_ix]
-            .status
-            .store(Status::Dead, atomic::Ordering::Release);
-    }
-
-    for (_, node_ix) in dead_nodes {
-        AtomicInner::drop_data(&connectivity_graph[node_ix]);
+    for (_, node) in dead_nodes {
+        AtomicInner::drop_data(&node);
     }
 }
 
@@ -246,11 +200,11 @@ fn trace_children(
     traced_nodes: &mut TracedNodeList,
     connectivity_graph: &mut ConnectivityGraph,
 ) {
-    let pin_parent = connectivity_graph[parent_ix].clone();
+    let pin_parent = traced_nodes.get_index(parent_ix).unwrap().0.clone();
     let parent = if let Some(parent) = pin_parent.data.try_write() {
         parent
     } else {
-        // If we can't get exclusive access to child, it must be locked by some active thread.
+        // If we can't get exclusive access to parent, it must be locked by some active thread.
         //
         // It must be live and not visiting its children will undercount any nodes it owns, which is
         // guaranteed to prevent us from deciding those nodes are dead.
@@ -262,7 +216,7 @@ fn trace_children(
 
     parent.visit_children(&mut GcVisitor {
         visitor: &mut |node| {
-            let child_ix = match traced_nodes.entry(NodeKey::from(&node)) {
+            match traced_nodes.entry(node.into()) {
                 indexmap::map::Entry::Occupied(mut seen) => {
                     // We've already seen this node. We do a saturating add because it's ok to
                     // undercount references here and usize::max references is kind of a degenerate
@@ -270,24 +224,19 @@ fn trace_children(
                     *seen.get_mut() =
                         NonZeroUsize::new(seen.get().get().saturating_add(1)).unwrap();
 
-                    connectivity_graph.add_edge(
-                        parent_ix,
-                        traced_nodes.get_index_of(&NodeKey::from(&node)).unwrap(),
-                        (),
-                    );
-                    return;
+                    connectivity_graph.add_edge(parent_ix, seen.index(), ());
                 }
                 indexmap::map::Entry::Vacant(unseen) => {
-                    let child_ix = connectivity_graph.add_node(StrongNode { inner_ptr: node });
+                    let child_ix = connectivity_graph.add_node(());
+                    debug_assert_eq!(unseen.index(), child_ix);
+
                     // 1 for the graph strong reference, 1 for the seen reference.
-                    unseen.insert(NonZeroUsize::new(2).unwrap());
                     connectivity_graph.add_edge(parent_ix, child_ix, ());
 
-                    child_ix
+                    unseen.insert(NonZeroUsize::new(2).unwrap());
+                    pending_nodes.push_back(child_ix);
                 }
             };
-
-            pending_nodes.push_back(child_ix);
         },
     });
 }
@@ -295,14 +244,11 @@ fn trace_children(
 fn filter_live_node_children(
     graph: &ConnectivityGraph,
     node: GraphIndex,
-    dead_nodes: &mut HashMap<NodeKey, GraphIndex>,
+    dead_nodes: &mut HashMap<GraphIndex, StrongNode>,
 ) {
-    for &child in graph.neighbors_slice(node) {
-        if dead_nodes
-            .remove(&NodeKey::from(graph[child].deref()))
-            .is_some()
-        {
-            filter_live_node_children(graph, child, dead_nodes);
+    for child in graph.neighbors_slice(node) {
+        if dead_nodes.remove(child).is_some() {
+            filter_live_node_children(graph, *child, dead_nodes);
         }
     }
 }

@@ -32,9 +32,7 @@ enum Status {
     ///
     /// If we don't know that A was possibly modified (and may have had its child graph modified),
     /// we'll try to destroy B. By invalidating `Traced` on access to A's data, we know to remove B
-    /// from the list of `Dead` nodes. A's subgraph was unmodified, we'll either clean it up right
-    /// away (B only has A as a parent) or later (B has some other parent which is also a child of
-    /// A).
+    /// from the list of `Dead` nodes.
     Traced,
     /// The Collector completed collection and believes the node is dead. This status is
     /// unrecoverable.
@@ -101,7 +99,7 @@ where
 
             unsafe { ManuallyDrop::drop(&mut data_guard) };
 
-            std::mem::forget(data_guard)
+            std::mem::forget(data_guard);
         }
     }
 }
