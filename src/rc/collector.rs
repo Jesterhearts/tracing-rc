@@ -176,7 +176,7 @@ fn collect_old_gen() {
     }
 
     for (_, node) in dead_nodes {
-        Inner::drop_data(&node);
+        node.drop_data();
     }
 }
 
