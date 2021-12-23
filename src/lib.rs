@@ -162,6 +162,12 @@ macro_rules! impl_node {
             pub(super) $field: $ptr_ty<$inner_ty<dyn Trace>>,
         }
 
+        impl From<$ptr_ty<$inner_ty<dyn Trace>>> for $name {
+            fn from(ptr: $ptr_ty<$inner_ty<dyn Trace>>) -> Self {
+                Self { inner_ptr: ptr }
+            }
+        }
+
         impl ::std::fmt::Debug for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.debug_struct("Node")
@@ -190,7 +196,10 @@ macro_rules! impl_node {
 
         impl PartialEq for $name {
             fn eq(&self, other: &Self) -> bool {
-                $ptr_ty::ptr_eq(&self.$field, &other.$field)
+                std::ptr::eq(
+                    $ptr_ty::as_ptr(&self.$field) as *const $inner_ty<()>,
+                    $ptr_ty::as_ptr(&other.$field) as *const $inner_ty<()>,
+                )
             }
         }
 
