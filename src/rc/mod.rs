@@ -236,9 +236,10 @@ where
 
 impl<T: Trace + 'static> Drop for Gc<T> {
     fn drop(&mut self) {
-        if Rc::strong_count(&self.ptr) == 1 {
-            Inner::drop_data(&self.ptr);
-        } else if self.ptr.status.get() != Status::Dead && self.ptr.try_mark_ref_dropped() {
+        if Rc::strong_count(&self.ptr) > 1
+            && self.ptr.status.get() != Status::Dead
+            && self.ptr.try_mark_ref_dropped()
+        {
             let node = self.node();
 
             // It's possible that this will turn out to be a member of a cycle, so we need
@@ -303,13 +304,22 @@ where
     }
 }
 
+impl<T> Drop for Inner<T>
+where
+    T: Trace + ?Sized,
+{
+    fn drop(&mut self) {
+        self.drop_data();
+    }
+}
+
 impl<T> Inner<T>
 where
     T: Trace + ?Sized,
 {
-    fn drop_data(ptr: &Rc<Self>) {
-        if let Ok(mut mut_borrow) = ptr.data.try_borrow_mut() {
-            ptr.status.set(Status::Dead);
+    fn drop_data(&self) {
+        if let Ok(mut mut_borrow) = self.data.try_borrow_mut() {
+            self.status.set(Status::Dead);
 
             // SAFETY: During drop of the data, we forget a mut borrow of it, which bans all access
             // to the data afterwards. If we're able to reach here, we're the last
