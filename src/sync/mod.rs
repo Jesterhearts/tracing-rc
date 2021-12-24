@@ -60,7 +60,7 @@ pub use self::collector::{
     collect_with_options,
 };
 
-/// Wraps an immutable borrowed reference to a value in a [`Agc`].
+/// Wraps a shared reference to a value in a [`Agc`].
 pub struct Ref<'a, T: ?Sized> {
     guard: RwLockReadGuard<'a, ManuallyDrop<T>>,
 }
@@ -155,6 +155,8 @@ where
     pub fn read(&self) -> Ref<'_, T> {
         if self.ptr.status.load(atomic::Ordering::Acquire) != Status::Dead {
             let guard = self.ptr.data.read_recursive();
+            // We must update this after acquiring the lock to prevent races with tracing and seeing
+            // nodes as possibly dirty.
             self.ptr
                 .status
                 .store(Status::Live, atomic::Ordering::Release);
@@ -171,6 +173,8 @@ where
     pub fn try_borrow(&self) -> Option<Ref<'_, T>> {
         if self.ptr.status.load(atomic::Ordering::Acquire) != Status::Dead {
             if let Some(guard) = self.ptr.data.try_read_recursive() {
+                // We must update this after acquiring the lock to prevent races with tracing and
+                // seeing nodes as possibly dirty.
                 self.ptr
                     .status
                     .store(Status::Live, atomic::Ordering::Release);
