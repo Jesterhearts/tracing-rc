@@ -27,9 +27,8 @@ use collector::{
     WeakNode,
     YOUNG_GEN,
 };
+#[doc(inline)]
 pub use trace::Trace;
-
-use crate::Status;
 
 /// Wraps an immutable borrowed reference to a value in a [`Gc`].
 pub struct Ref<'a, T: ?Sized> {
@@ -284,6 +283,18 @@ where
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Status {
+    /// The node has had its refcount incremented recently or a mutable/immutable borrow checked
+    /// out and is definitely alive.
+    Live,
+    /// The node had its reference count decremented recently and may be dead.
+    RecentlyDecremented,
+    /// The Collector completed collection and believes the node is dead. This status is
+    /// unrecoverable.
+    Dead,
+}
+
 pub(crate) struct Inner<T: Trace + ?Sized> {
     status: Cell<Status>,
     data: RefCell<ManuallyDrop<T>>,
@@ -370,8 +381,8 @@ mod tests {
 
     use pretty_assertions::assert_eq;
 
-    use crate::{
-        rc::Inner,
+    use crate::rc::{
+        Inner,
         Status,
     };
 

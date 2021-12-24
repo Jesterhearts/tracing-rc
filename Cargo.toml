@@ -6,9 +6,28 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Jesterhearts/tracing-rc"
 
+[features]
+sync = [ "atomic", "once_cell", "dashmap", "parking_lot" ]
+
 [dependencies]
 indexmap = '^1.0'
 petgraph = '^0.6'
+
+[dependencies.atomic]
+version = '^0.5'
+optional = true
+
+[dependencies.dashmap]
+version = '^5.0'
+optional = true
+
+[dependencies.once_cell]
+version = '^1.0'
+optional = true
+
+[dependencies.parking_lot]
+version = '^0.11'
+optional = true
 
 [dev-dependencies]
 criterion = '^0.3'

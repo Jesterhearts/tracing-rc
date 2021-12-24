@@ -2,7 +2,6 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     num::NonZeroUsize,
-    ops::Deref,
     rc::{
         Rc,
         Weak,
@@ -22,6 +21,7 @@ use petgraph::{
 };
 
 use crate::{
+    impl_node,
     rc::{
         trace::Trace,
         Gc,
@@ -32,64 +32,8 @@ use crate::{
     CollectionType,
 };
 
-macro_rules! impl_node {
-    ($name:ident, $inner:ident::upgrade($varname:ident) => $upg:expr) => {
-        impl std::fmt::Debug for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.debug_struct("Node")
-                    .field("strong", &$inner::strong_count(&self.inner_ptr))
-                    .field("inner_ptr", &{
-                        let $varname = &self.inner_ptr;
-                        $upg
-                    })
-                    .finish()
-            }
-        }
-
-        impl From<$inner<Inner<dyn Trace>>> for $name {
-            fn from(ptr: $inner<Inner<dyn Trace>>) -> Self {
-                Self { inner_ptr: ptr }
-            }
-        }
-
-        impl Deref for $name {
-            type Target = $inner<Inner<dyn Trace>>;
-
-            fn deref(&self) -> &Self::Target {
-                &self.inner_ptr
-            }
-        }
-
-        impl std::hash::Hash for $name {
-            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-                state.write_usize($inner::as_ptr(&self.inner_ptr) as *const Inner<()> as usize)
-            }
-        }
-
-        impl PartialEq for $name {
-            fn eq(&self, other: &Self) -> bool {
-                std::ptr::eq(
-                    $inner::as_ptr(&self.inner_ptr) as *const Inner<()>,
-                    $inner::as_ptr(&other.inner_ptr) as *const Inner<()>,
-                )
-            }
-        }
-
-        impl Eq for $name {}
-    };
-}
-
-#[derive(Clone)]
-pub(crate) struct WeakNode {
-    pub(super) inner_ptr: Weak<Inner<dyn Trace>>,
-}
-
-impl_node!(WeakNode, Weak::upgrade(ptr) => Weak::upgrade(ptr));
-
-#[derive(Clone)]
-pub(crate) struct StrongNode {
-    pub(super) inner_ptr: Rc<Inner<dyn Trace>>,
-}
+impl_node!(WeakNode { inner_ptr: Weak<Inner<dyn Trace>> }, upgrade(ptr) => Weak::upgrade(ptr));
+impl_node!(StrongNode { inner_ptr: Rc<Inner<dyn Trace>> }, upgrade(ptr) => ptr);
 
 impl TryFrom<WeakNode> for StrongNode {
     type Error = ();
@@ -101,40 +45,14 @@ impl TryFrom<WeakNode> for StrongNode {
     }
 }
 
-impl_node!(StrongNode, Rc::upgrade(ptr) => ptr);
-
-#[derive(Debug, Clone, Copy)]
-struct NodeKey(*const Inner<dyn Trace>);
-
-impl std::hash::Hash for NodeKey {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_usize(self.0 as *const Inner<()> as usize)
-    }
-}
-
-impl PartialEq for NodeKey {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.0 as *const Inner<()>, other.0 as *const Inner<()>)
-    }
-}
-
-impl Eq for NodeKey {}
-
-impl From<&Rc<Inner<dyn Trace>>> for NodeKey {
-    fn from(rc: &Rc<Inner<dyn Trace>>) -> Self {
-        Self(Rc::as_ptr(rc))
-    }
-}
-
 /// Visitor provided during tracing of the reachable object graph. You shouldn't need to interact
-/// with this as [`Gc::visit_children`] will do the right thing for you, but you may call
-/// [`Self::visit_node`] if you prefer.
+/// with this as [`Gc::visit_children`] will do the right thing for you.
 pub struct GcVisitor<'cycle> {
     visitor: &'cycle mut dyn FnMut(Rc<Inner<dyn Trace>>),
 }
 
 impl GcVisitor<'_> {
-    /// Visit an owned [Gc] node.
+    /// Visit an owned [`Gc`] node.
     pub fn visit_node<T: Trace + 'static>(&mut self, node: &Gc<T>) {
         (self.visitor)(node.ptr.clone());
     }

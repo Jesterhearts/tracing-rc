@@ -6,8 +6,8 @@ use crate::rc::GcVisitor;
 /// recommended that you store them in a [`Gc`](crate::rc::Gc) unless they contain possibly cyclic
 /// references as there is still a real cost to doing so. You're probably better off using
 /// [`std::rc::Rc`] in cases where you know a type can't participate in cycles.
+/// Visit the gc pointers owned by this type.
 pub trait Trace {
-    /// Visit the gc pointers owned by this type.
     ///
     /// It is recommended that you simply call `visit_children(visitor)` on each value owned by the
     /// implementor which may participate in a reference cycle. The default implementation for
@@ -161,9 +161,9 @@ pub trait Trace {
 #[macro_export]
 macro_rules! empty_trace {
     ($t:path) => {
-        impl Trace for $t {
+        impl $crate::rc::Trace for $t {
             #[inline]
-            fn visit_children(&self, _: &mut GcVisitor) {}
+            fn visit_children(&self, _: &mut $crate::rc::GcVisitor) {}
         }
     };
     ($first:path, $($rest:path),+) => {

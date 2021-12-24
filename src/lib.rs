@@ -69,6 +69,10 @@
 /// A non-sync cycle-collecting reference-counted smart pointer.
 pub mod rc;
 
+#[cfg(feature = "sync")]
+/// An atomic cycle-collecting reference-counted smart pointer.
+pub mod sync;
+
 /// Controls the style of collection carried out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -151,9 +155,56 @@ impl Default for CollectOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Status {
-    Live,
-    RecentlyDecremented,
-    Dead,
+macro_rules! impl_node {
+    ($name:ident { $field:ident: $ptr_ty:ident<$inner_ty:ident<dyn Trace>>$(,)? }, upgrade($varname:ident) => $upg:expr) => {
+        #[derive(Clone)]
+        pub(crate) struct $name {
+            pub(super) $field: $ptr_ty<$inner_ty<dyn Trace>>,
+        }
+
+        impl From<$ptr_ty<$inner_ty<dyn Trace>>> for $name {
+            fn from(ptr: $ptr_ty<$inner_ty<dyn Trace>>) -> Self {
+                Self { inner_ptr: ptr }
+            }
+        }
+
+        impl ::std::fmt::Debug for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_struct("Node")
+                    .field("strong", &$ptr_ty::strong_count(&self.$field))
+                    .field("inner_ptr", &{
+                        let $varname = &self.$field;
+                        $upg
+                    })
+                    .finish()
+            }
+        }
+
+        impl ::std::ops::Deref for $name {
+            type Target = $ptr_ty<$inner_ty<dyn Trace>>;
+
+            fn deref(&self) -> &Self::Target {
+                &self.$field
+            }
+        }
+
+        impl ::std::hash::Hash for $name {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                state.write_usize($ptr_ty::as_ptr(&self.$field) as *const $inner_ty<()> as usize)
+            }
+        }
+
+        impl PartialEq for $name {
+            fn eq(&self, other: &Self) -> bool {
+                std::ptr::eq(
+                    $ptr_ty::as_ptr(&self.$field) as *const $inner_ty<()>,
+                    $ptr_ty::as_ptr(&other.$field) as *const $inner_ty<()>,
+                )
+            }
+        }
+
+        impl Eq for $name {}
+    };
 }
+
+pub(crate) use impl_node;
