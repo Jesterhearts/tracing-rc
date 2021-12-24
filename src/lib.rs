@@ -70,7 +70,7 @@
 pub mod rc;
 
 #[allow(dead_code)]
-#[cfg(feature = "atomic")]
+#[cfg(feature = "sync")]
 mod sync;
 
 /// Controls the style of collection carried out.
