@@ -79,6 +79,11 @@ type ConnectivityGraph = Csr<(), (), Directed, GraphIndex>;
 
 type TracedNodeList = IndexMap<StrongNode, NonZeroUsize>;
 
+#[doc(hidden)]
+pub fn count_roots() -> usize {
+    YOUNG_GEN.len() + OLD_GEN.len()
+}
+
 /// Perform a full, cycle-tracing collection of both the old & young gen.
 pub fn collect_full() {
     collect_with_options(CollectOptions::TRACE_AND_COLLECT_ALL);
@@ -227,9 +232,9 @@ fn trace_children(
                     let child_ix = connectivity_graph.add_node(());
                     debug_assert_eq!(unseen.index(), child_ix);
 
-                    // 1 for the graph strong reference, 1 for the seen reference.
                     connectivity_graph.add_edge(parent_ix, child_ix, ());
 
+                    // 1 for the graph strong reference, 1 for the seen reference.
                     unseen.insert(NonZeroUsize::new(2).unwrap());
                     pending_nodes.push_back(child_ix);
                 }

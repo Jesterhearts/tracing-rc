@@ -69,9 +69,9 @@
 /// A non-sync cycle-collecting reference-counted smart pointer.
 pub mod rc;
 
-#[allow(dead_code)]
 #[cfg(feature = "sync")]
-mod sync;
+/// An atomic cycle-collecting reference-counted smart pointer.
+pub mod sync;
 
 /// Controls the style of collection carried out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,7 +158,7 @@ impl Default for CollectOptions {
 macro_rules! impl_node {
     ($name:ident { $field:ident: $ptr_ty:ident<$inner_ty:ident<dyn Trace>>$(,)? }, upgrade($varname:ident) => $upg:expr) => {
         #[derive(Clone)]
-        pub(super) struct $name {
+        pub(crate) struct $name {
             pub(super) $field: $ptr_ty<$inner_ty<dyn Trace>>,
         }
 

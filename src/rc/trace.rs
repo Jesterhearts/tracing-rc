@@ -163,7 +163,7 @@ macro_rules! empty_trace {
     ($t:path) => {
         impl $crate::rc::Trace for $t {
             #[inline]
-            fn visit_children(&self, _: &mut GcVisitor) {}
+            fn visit_children(&self, _: &mut $crate::rc::GcVisitor) {}
         }
     };
     ($first:path, $($rest:path),+) => {

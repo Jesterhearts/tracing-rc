@@ -10,12 +10,6 @@ use parking_lot::{
     RwLockReadGuard,
 };
 
-use crate::sync::collector::{
-    GcVisitor,
-    WeakNode,
-    YOUNG_GEN,
-};
-
 /// Notes:
 /// There are several moving parts the collector needs to care about in order to prevent leaks or
 /// early drop.
@@ -54,10 +48,22 @@ use crate::sync::collector::{
 /// modifies the graph through that reference after it's been set.
 mod collector;
 
-pub use self::collector::{
-    collect,
-    collect_full,
-    collect_with_options,
+/// Contains the `sync` version of the [`Trace`] trait.
+pub mod trace;
+
+use self::collector::{
+    WeakNode,
+    YOUNG_GEN,
+};
+pub use self::{
+    collector::{
+        collect,
+        collect_full,
+        collect_with_options,
+        count_roots,
+        GcVisitor,
+    },
+    trace::Trace,
 };
 
 /// Wraps a shared reference to a value in a [`Agc`].
@@ -103,14 +109,7 @@ enum Status {
     Dead,
 }
 
-pub trait Trace: Send + Sync {
-    fn visit_children(&self, visitor: &mut GcVisitor);
-}
-
-impl Trace for () {
-    fn visit_children(&self, _: &mut GcVisitor) {}
-}
-
+/// TODO
 pub struct Agc<T: Trace + 'static> {
     ptr: Arc<AtomicInner<T>>,
 }
@@ -121,7 +120,7 @@ where
 {
     /// Construct a new `Agc` containing `data` which will be automatically cleaned up with it is no
     /// longer reachable, even in the presence of cyclical references.
-    fn new(data: T) -> Self {
+    pub fn new(data: T) -> Self {
         Self {
             ptr: Arc::new(AtomicInner {
                 status: Atomic::new(Status::Live),
@@ -201,6 +200,22 @@ where
     T: Trace + 'static,
 {
     fn drop(&mut self) {
+        if self
+            .ptr
+            .status
+            .fetch_update(
+                atomic::Ordering::SeqCst,
+                atomic::Ordering::SeqCst,
+                |status| match status {
+                    Status::Dead => None,
+                    _ => Some(Status::RecentlyDecremented),
+                },
+            )
+            .is_err()
+        {
+            return;
+        }
+
         // It is okay if this overwrites/is overwritten by a `Status::Traced`. We won't drop the
         // inner data here, since the collector holds a strong reference, so we're not worried about
         // child destructors altering the object graph. If the collector completes its tracing, it
@@ -216,14 +231,87 @@ where
     }
 }
 
-struct AtomicInner<T: ?Sized + Trace + 'static> {
+impl<T> Trace for Agc<T>
+where
+    T: Trace + 'static,
+{
+    fn visit_children(&self, visitor: &mut GcVisitor) {
+        visitor.visit_node(self)
+    }
+}
+
+impl<T> std::fmt::Debug for Agc<T>
+where
+    T: Trace + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Agc")
+            .field("strong", &format_args!("{}", Self::strong_count(self)))
+            .field(
+                "data",
+                &format_args!(
+                    "{:?} @ {:?}",
+                    self.try_borrow().map(|_| std::any::type_name::<T>()),
+                    (&**self.ptr.data.read_recursive() as *const T)
+                ),
+            )
+            .finish()
+    }
+}
+
+impl<T> Clone for Agc<T>
+where
+    T: Trace + 'static,
+{
+    fn clone(&self) -> Self {
+        let _guard = self.ptr.data.read_recursive();
+        self.ptr
+            .status
+            .store(Status::Live, atomic::Ordering::Release);
+
+        Self {
+            ptr: self.ptr.clone(),
+        }
+    }
+}
+
+impl<T: Trace + 'static> PartialEq for Agc<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        *self.read() == *other.read()
+    }
+}
+
+impl<T: Trace + 'static> Eq for Agc<T> where T: Eq {}
+
+impl<T: Trace + 'static> PartialOrd for Agc<T>
+where
+    T: PartialOrd,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.read().partial_cmp(&other.read())
+    }
+}
+
+impl<T: Trace + 'static> Ord for Agc<T>
+where
+    T: Ord,
+{
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.read().cmp(&other.read())
+    }
+}
+
+pub(crate) struct AtomicInner<T: ?Sized + Trace> {
     status: Atomic<Status>,
     data: RwLock<ManuallyDrop<T>>,
 }
 
 impl<T> Drop for AtomicInner<T>
 where
-    T: ?Sized + Trace + 'static,
+    T: ?Sized + Trace,
 {
     fn drop(&mut self) {
         self.drop_data();
@@ -251,7 +339,7 @@ where
 
 impl<T> AtomicInner<T>
 where
-    T: ?Sized + Trace + 'static,
+    T: ?Sized + Trace,
 {
     fn drop_data(&self) {
         if let Some(mut data_guard) = self.data.try_write() {
