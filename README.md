@@ -16,9 +16,15 @@ which don't have clear lifetimes or ownership.
   [generational-arena](https://lib.rs/crates/generational-arena) is probably best.
 
 # Usage of Unsafe
-The library has a single usage of unsafe where it drops its inner data. This unsafe is protected by
-a `borrow_mut` call to a `RefCell` which is intentionally leaked after dropping the data, making the
-inner (dropped) data inaccessible.
+The library has two usages of unsafe where it drops the inner data of the `Gc` and `Agc` types. In
+the case of `Gc`, this unsafe is protected by a `borrow_mut` call to a `RefCell` which is
+intentionally leaked after dropping the data, making the inner (dropped) data inaccessible. `Agc`
+similarly leaks a `WriteMutexGuard` to its inner data post-drop.
+
+# Support for Concurrent Collection
+This library has experimental support for concurrent collection behind the `sync` flag. Enabling the
+`sync` flag will provide access to an atomic `Agc` type as well as concurrent `collect`
+implementations.
 
 # Soundness & Rc Collector Design Considerations
 Because any implementation of the `Trace` trait and custom `Drop` implementations for objects
@@ -121,8 +127,8 @@ inspired this crate.
       is used for cycle tracing. It was very helpful in understanding how the original paper works,
       although this crate takes a very different approach.
 * [gc-arena](https://crates.io/crates/gc-arena)
-    * I think the core design of this is better than mine. I created this crate because I felt like
-      gc-arena was too difficult to integrate for my specific usecase.
+    * A very neat implementation of garbage collection relying on lifetimes and arenas rather than
+      cycle tracing.
 * [cactusref](https://crates.io/crates/cactusref)
     * Another take on cycle collection which is pretty novel.
 * [rust-gc](https://crates.io/crates/gc)

@@ -1,8 +1,9 @@
 use crate::sync::GcVisitor;
 
-/// TODO
+/// The `Sync` version of the [`rc::Trace`](crate::rc::Trace) trait.
 pub trait Trace: Send + Sync {
-    /// TODO
+    /// Visit the children of this type. The implementation should call `visit_children` on each
+    /// owned value which implements [`Trace`].
     fn visit_children(&self, visitor: &mut GcVisitor);
 }
 

@@ -60,14 +60,13 @@ pub(super) static OLD_GEN: Lazy<DashSet<WeakNode>> = Lazy::new(DashSet::default)
 static COLLECTION_MUTEX: Mutex<()> = const_mutex(());
 
 /// Visitor provided during tracing of the reachable object graph. You shouldn't need to interact
-/// with this as [`Gc::visit_children`] will do the right thing for you, but you may call
-/// [`Self::visit_node`] if you prefer.
+/// with this as [`Agc::visit_children`] will do the right thing for you.
 pub struct GcVisitor<'cycle> {
     visitor: &'cycle mut dyn FnMut(Arc<AtomicInner<dyn Trace>>),
 }
 
 impl GcVisitor<'_> {
-    /// Visit an owned [Gc] node.
+    /// Visit an owned [`Agc`] node.
     pub fn visit_node<T: Trace + 'static>(&mut self, node: &Agc<T>) {
         (self.visitor)(node.ptr.clone());
     }
@@ -85,16 +84,30 @@ pub fn count_roots() -> usize {
 }
 
 /// Perform a full, cycle-tracing collection of both the old & young gen.
+/// See [`collect`] for more details on the implementation of collection.
 pub fn collect_full() {
     collect_with_options(CollectOptions::TRACE_AND_COLLECT_ALL);
 }
 
 /// Perform a normal collection cycle.
+///
+/// - Only one thread at a time is permitted to collect the old generation. If another thread
+///   attempts to start collection while the old gen is being processed, it will return early
+///   without performing any garbage collection.
+/// - Collection is optimized for latency over throughput. The goal is minimal pause times, not
+///   maximizing the speed with which memory is released.
+/// - Collection is not incremental, it will process all of the possible pointers available at the
+///   time collection starts.
+/// - It may take several calls to `collect` or [`collect_full`] before all garbage is cleaned up
+///   depending on the specific location of values in the old/young gen, even if no additional
+///   garbage is produced between calls; however, is likely that only weak references to `Agc`
+///   values will remain after a single pass.
 pub fn collect() {
     collect_with_options(CollectOptions::default());
 }
 
 /// Perform a collection cycle based on [`CollectOptions`].
+/// See [`collect`] for more details on the implementation of collection.
 pub fn collect_with_options(options: CollectOptions) {
     collect_new_gen(options);
     if options.kind != CollectionType::YoungOnly {

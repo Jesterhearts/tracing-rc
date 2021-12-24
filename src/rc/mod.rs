@@ -27,6 +27,7 @@ use collector::{
     WeakNode,
     YOUNG_GEN,
 };
+#[doc(inline)]
 pub use trace::Trace;
 
 /// Wraps an immutable borrowed reference to a value in a [`Gc`].

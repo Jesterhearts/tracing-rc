@@ -46,14 +46,13 @@ impl TryFrom<WeakNode> for StrongNode {
 }
 
 /// Visitor provided during tracing of the reachable object graph. You shouldn't need to interact
-/// with this as [`Gc::visit_children`] will do the right thing for you, but you may call
-/// [`Self::visit_node`] if you prefer.
+/// with this as [`Gc::visit_children`] will do the right thing for you.
 pub struct GcVisitor<'cycle> {
     visitor: &'cycle mut dyn FnMut(Rc<Inner<dyn Trace>>),
 }
 
 impl GcVisitor<'_> {
-    /// Visit an owned [Gc] node.
+    /// Visit an owned [`Gc`] node.
     pub fn visit_node<T: Trace + 'static>(&mut self, node: &Gc<T>) {
         (self.visitor)(node.ptr.clone());
     }

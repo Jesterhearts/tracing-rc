@@ -51,20 +51,19 @@ mod collector;
 /// Contains the `sync` version of the [`Trace`] trait.
 pub mod trace;
 
-use self::collector::{
+pub use collector::{
+    collect,
+    collect_full,
+    collect_with_options,
+    count_roots,
+    GcVisitor,
+};
+use collector::{
     WeakNode,
     YOUNG_GEN,
 };
-pub use self::{
-    collector::{
-        collect,
-        collect_full,
-        collect_with_options,
-        count_roots,
-        GcVisitor,
-    },
-    trace::Trace,
-};
+#[doc(inline)]
+pub use trace::Trace;
 
 /// Wraps a shared reference to a value in a [`Agc`].
 pub struct Ref<'a, T: ?Sized> {
@@ -109,7 +108,24 @@ enum Status {
     Dead,
 }
 
-/// TODO
+/// A cycle-collected reference-counted smart pointer which may be shared across threads and
+/// supports concurrent collection.
+///
+/// `Agc<T>` provides shared ownership of a value of type `T`, allocated on the heap. Cloning it
+/// will produce a new `Agc` instance which points to the same allocation as the original `Agc`.
+///
+/// Unlike [`std::sync::Arc`], `Agc` pointers may refer to each other in a way that creates cycles
+/// arbitrarily without causing leaks, provided that the program calls [`collect`] to collect those
+/// cycles.
+///
+/// - In most cases you **must** call collect to reclaim memory for dropped `Agc`s _even if they are
+///   acyclical_.
+/// - You may call [`collect`] from any thread to collect cycles. The implementation of collect is
+///   intended to provide very low pause times for concurrently running threads, although it will
+///   block the thread which actually invokes [`collect`] until the collection is complete.
+///     - While it may be subject to change, the current implementation will block access to `Agc`s
+///       data for as long as it takes to visit its direct descendents, and will only do so if that
+///       `Agc` is a candidate for collection.
 pub struct Agc<T: Trace + 'static> {
     ptr: Arc<AtomicInner<T>>,
 }
