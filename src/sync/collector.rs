@@ -10,7 +10,6 @@ use std::{
     },
 };
 
-use atomic::Ordering;
 use dashmap::{
     DashMap,
     DashSet,
@@ -55,8 +54,8 @@ impl TryFrom<&WeakNode> for StrongNode {
     }
 }
 
-static YOUNG_GEN: Lazy<DashMap<WeakNode, usize>> = Lazy::new(DashMap::default);
-static OLD_GEN: Lazy<DashSet<WeakNode>> = Lazy::new(DashSet::default);
+pub(super) static YOUNG_GEN: Lazy<DashMap<WeakNode, usize>> = Lazy::new(DashMap::default);
+pub(super) static OLD_GEN: Lazy<DashSet<WeakNode>> = Lazy::new(DashSet::default);
 
 static COLLECTION_MUTEX: Mutex<()> = const_mutex(());
 
@@ -101,14 +100,7 @@ pub fn collect_with_options(options: CollectOptions) {
 fn collect_new_gen(options: CollectOptions) {
     let mut to_old_gen = vec![];
     YOUNG_GEN.retain(|node, generation| {
-        let strong_node = if let Some(node) = node.upgrade() {
-            node
-        } else {
-            return false;
-        };
-
-        // Relaxed ordering is fine here because all this does is save us work.
-        if strong_node.status.load(Ordering::Relaxed) == Status::Live {
+        if node.strong_count() == 0 {
             return false;
         }
 
@@ -163,14 +155,14 @@ fn collect_old_gen() {
     let mut dead_nodes = HashMap::default();
 
     for (node_ix, (node, refs)) in traced_nodes.into_iter().enumerate() {
-        if Arc::strong_count(&node) > refs.get()
-            || node.status.load(atomic::Ordering::Acquire) != Status::Traced
-        {
+        if Arc::strong_count(&node) > refs.get() {
             // Even if this node becomes dead between the read of the strong count above and the
             // cmp/mark as live, we won't leak memory as the node will get added to the
             // young gen.
-            //
-            // Alternatively, this node may be dead, but something accessed it internals between
+            node.status.store(Status::Live, atomic::Ordering::Release);
+            live_nodes.push(node_ix);
+        } else if node.status.load(atomic::Ordering::Acquire) != Status::Traced {
+            // This node may be dead, but something accessed it internals between
             // the time we traced its children and now. We can't know if the child graph
             // is still the same, so we can't attempt to drop its children. If the node became dead
             // between tracing and access to its children, the node will end up placed in the young
@@ -201,18 +193,23 @@ fn trace_children(
     connectivity_graph: &mut ConnectivityGraph,
 ) {
     let pin_parent = traced_nodes.get_index(parent_ix).unwrap().0.clone();
-    let parent = if let Some(parent) = pin_parent.data.try_write() {
-        parent
-    } else {
-        // If we can't get exclusive access to parent, it must be locked by some active thread.
-        //
-        // It must be live and not visiting its children will undercount any nodes it owns, which is
-        // guaranteed to prevent us from deciding those nodes are dead.
-        return;
+    let parent = {
+        if let Some(_guard) = pin_parent.data.try_write() {
+            // This must be guarded by an exclusive lock to prevent altering of the child graph
+            // without marking the node dirty.
+            pin_parent
+                .status
+                .store(Status::Traced, atomic::Ordering::Release);
+        } else {
+            // If we can't get exclusive access to parent, it must be locked by some active thread.
+            //
+            // It must be live and not visiting its children will undercount any nodes it owns,
+            // which is guaranteed to prevent us from deciding those nodes are dead.
+            return;
+        };
+
+        pin_parent.data.read_recursive()
     };
-    pin_parent
-        .status
-        .store(Status::Traced, atomic::Ordering::Release);
 
     parent.visit_children(&mut GcVisitor {
         visitor: &mut |node| {
