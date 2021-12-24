@@ -10,9 +10,6 @@ mod rc {
 mod sync {
     mod cycles;
     mod fuzzer_found;
-
-    #[cfg(not(miri))]
-    mod necromancy;
 }
 
 #[cfg(not(miri))]
