@@ -1,0 +1,28 @@
+name: Rust
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build --verbose
+    - name: Run rc tests
+      run: cargo test --verbose -- rc
+    - name: Run sync tests
+      run: cargo test --verbose --features sync -- sync --test-threads=1
+    - name: Build nightly
+      run: cargo +nightly build --verbose
+    - name: Run miri tests
+      run: cargo +nightly miri test --all-features
