@@ -22,6 +22,11 @@ jobs:
       run: cargo test --verbose -- rc
     - name: Run sync tests
       run: cargo test --verbose --features sync -- sync --test-threads=1
+    - name: Install late  st nightly
+      uses: actions-rs/toolchain@v1
+      with:
+          toolchain: nightly
+          override: true
     - name: Build nightly
       run: cargo +nightly build --verbose
     - name: Run miri tests
