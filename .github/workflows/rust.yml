@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Install late  st nightly
+    - name: Install latest nightly
       uses: actions-rs/toolchain@v1
       with:
           toolchain: nightly
