@@ -11,10 +11,9 @@ pub trait Trace {
     ///
     /// It is recommended that you simply call `visit_children(visitor)` on each value owned by the
     /// implementor which may participate in a reference cycle. The default implementation for
-    /// `Gc` will appropriately notify the collector when it is visited. You may also pass your
-    /// struct's owned `Gc` values directly to the visitor.
+    /// `Gc` will appropriately notify the collector when it is visited.
     ///
-    /// Impromper implementation of this trait will not cause undefined behavior, however, if you
+    /// Improper implementation of this trait will not cause undefined behavior; however, if you
     /// fail to report a value you may leak memory and if you report a value you don't own (or
     /// report a value more than once), you may cause the collector to clean it up prematurely.
     /// Attemting to access a value which has been cleaned up will cause a panic, but will not cause

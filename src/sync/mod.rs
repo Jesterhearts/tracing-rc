@@ -123,9 +123,9 @@ enum Status {
 /// - You may call [`collect`] from any thread to collect cycles. The implementation of collect is
 ///   intended to provide very low pause times for concurrently running threads, although it will
 ///   block the thread which actually invokes [`collect`] until the collection is complete.
-///     - While it may be subject to change, the current implementation will block access to `Agc`s
-///       data for as long as it takes to visit its direct descendents, and will only do so if that
-///       `Agc` is a candidate for collection.
+///     - While the exact details are subject to change, the current implementation will block
+///       access to `Agc`s data for as long as it takes to update its metadata, and will only do so
+///       if that `Agc` is a candidate for collection.
 pub struct Agc<T: Trace + 'static> {
     ptr: Arc<AtomicInner<T>>,
 }

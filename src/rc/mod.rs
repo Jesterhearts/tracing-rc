@@ -137,7 +137,7 @@ where
 
     /// Returns true if the data in Self hasn't been dropped yet. This will almost always be the
     /// case unless it is called inside of a Drop implementation or if there is a bug present in a
-    /// Trace impl.
+    /// `Trace` impl.
     pub fn is_live(this: &Self) -> bool {
         this.ptr.is_live()
     }

@@ -99,9 +99,9 @@ pub fn collect_full() {
 /// - Collection is not incremental, it will process all of the possible pointers available at the
 ///   time collection starts.
 /// - It may take several calls to `collect` or [`collect_full`] before all garbage is cleaned up
-///   depending on the specific location of values in the old/young gen, even if no additional
-///   garbage is produced between calls; however, is likely that only weak references to `Agc`
-///   values will remain after a single pass.
+///   depending on the specific location of values in the old/young gen - even if no additional
+///   garbage is produced between calls; however, it is likely that most memory will be cleaned up
+///   after a single pass.
 pub fn collect() {
     collect_with_options(CollectOptions::default());
 }
