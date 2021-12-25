@@ -39,3 +39,5 @@ jobs:
     - uses: Swatinem/rust-cache@v1
     - name: Run miri tests
       run: cargo +nightly miri test --all-features
+      env:
+        MIRIFLAGS: -Zmiri-symbolic-alignment-check -Zmiri-check-number-validity -Zmiri-tag-raw-pointers -Zmiri-disable-isolation
