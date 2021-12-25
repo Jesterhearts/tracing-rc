@@ -15,7 +15,7 @@ use petgraph::{
     Direction,
 };
 use tracing_rc::rc::{
-    collector::count_roots,
+    count_roots,
     *,
 };
 
