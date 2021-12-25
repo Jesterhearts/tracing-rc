@@ -100,10 +100,5 @@ fn young_gen_only_gc(c: &mut Criterion) {
     }
 }
 
-#[cfg(not(debug_assertions))]
 criterion_group!(minimal_gc, no_gc_required, young_gen_only_gc);
-#[cfg(not(debug_assertions))]
 criterion_main!(minimal_gc);
-
-#[cfg(debug_assertions)]
-fn main() {}

@@ -154,10 +154,5 @@ fn maximally_dense(c: &mut Criterion) {
     }
 }
 
-#[cfg(not(debug_assertions))]
 criterion_group!(cycle_collection, simple_cycles, maximally_dense);
-#[cfg(not(debug_assertions))]
 criterion_main!(cycle_collection);
-
-#[cfg(debug_assertions)]
-fn main() {}

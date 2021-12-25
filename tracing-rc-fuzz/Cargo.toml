@@ -15,7 +15,7 @@ libfuzzer-sys = '0.4'
 petgraph = '^0.6'
 
 [dependencies.tracing-rc]
-path = ".."
+path = "../tracing-rc"
 
 # Prevent this from interfering with workspaces
 [workspace]
