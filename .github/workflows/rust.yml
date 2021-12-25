@@ -10,24 +10,29 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  stable:
 
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v2
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --tests --all-features --verbose
     - name: Run rc tests
-      run: cargo test --verbose -- rc
+      run: cargo test --verbose --all-features -- rc
     - name: Run sync tests
-      run: cargo test --verbose --features sync -- sync --test-threads=1
+      run: cargo test --verbose --all-features -- sync --test-threads=1
+      
+  nightly:
+  
+    runs-on: ubuntu-latest
+    
+    steps:
     - name: Install late  st nightly
       uses: actions-rs/toolchain@v1
       with:
           toolchain: nightly
           override: true
-    - name: Build nightly
-      run: cargo +nightly build --verbose
+          components: miri
     - name: Run miri tests
       run: cargo +nightly miri test --all-features
