@@ -16,6 +16,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - uses: Swatinem/rust-cache@v1
     - name: Build
       run: cargo build --tests --all-features --verbose
     - name: Run rc tests
@@ -28,11 +29,13 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+    - uses: actions/checkout@v2
     - name: Install latest nightly
       uses: actions-rs/toolchain@v1
       with:
           toolchain: nightly
           override: true
           components: miri
+    - uses: Swatinem/rust-cache@v1
     - name: Run miri tests
       run: cargo +nightly miri test --all-features
