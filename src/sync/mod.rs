@@ -216,6 +216,21 @@ where
     T: Trace + 'static,
 {
     fn drop(&mut self) {
+        // It is okay if this overwrites/is overwritten by Status::Traced.
+        // - It's fine if we overwrite Traced because we won't drop the inner data here (the
+        //   collector holds a strong reference), so we're not worried about child destructors
+        //   altering the object graph.
+        // - If the collector completes its tracing before this update, it will end up believing
+        //   this object is live anyways, since we haven't dropped the strong reference yet. Since
+        //   we are going to always store a weak reference in the young gen, we're not worried about
+        //   losing track of the object if it needs later cleanup.
+        //
+        // We're also okay with races with Status::Dead in the case of Trace bugs.
+        // - If the collector wins and sets Status::Dead, we won't overwrite it and will just do
+        //   nothing here.
+        // - If we win the race, the status will get overwritten with Dead and since we don't try to
+        //   read the data stored in this pointer, we don't end up deadlocking or panicking. The
+        //   leaked write lock prevents UB.
         if self
             .ptr
             .status
@@ -231,16 +246,6 @@ where
         {
             return;
         }
-
-        // It is okay if this overwrites/is overwritten by a `Status::Traced`. We won't drop the
-        // inner data here, since the collector holds a strong reference, so we're not worried about
-        // child destructors altering the object graph. If the collector completes its tracing, it
-        // will end up believing this object is live anyways, since we haven't dropped the strong
-        // reference yet. Since we are going to always store a weak reference in the young gen,
-        // we're not worried about losing track of the object if it needs later cleanup.
-        self.ptr
-            .status
-            .store(Status::RecentlyDecremented, atomic::Ordering::Release);
 
         let weak_node = self.node();
         YOUNG_GEN.insert(weak_node, 0);
