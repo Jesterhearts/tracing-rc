@@ -1,0 +1,43 @@
+name: Rust
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  stable:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - uses: Swatinem/rust-cache@v1
+    - name: Build
+      run: cargo build --tests --all-features --verbose
+    - name: Run rc tests
+      run: cargo test --verbose --all-features -- rc
+    - name: Run sync tests
+      run: cargo test --verbose --all-features -- sync --test-threads=1
+      
+  nightly:
+  
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install latest nightly
+      uses: actions-rs/toolchain@v1
+      with:
+          toolchain: nightly
+          override: true
+          components: miri
+    - uses: Swatinem/rust-cache@v1
+    - name: Run miri tests
+      run: cargo +nightly miri test --all-features
+      env:
+        MIRIFLAGS: -Zmiri-symbolic-alignment-check -Zmiri-check-number-validity -Zmiri-tag-raw-pointers -Zmiri-disable-isolation
