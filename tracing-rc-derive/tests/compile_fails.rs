@@ -1,3 +1,4 @@
+#[cfg(not(miri))]
 #[test]
 fn bad_attributes() {
     let test = trybuild::TestCases::new();

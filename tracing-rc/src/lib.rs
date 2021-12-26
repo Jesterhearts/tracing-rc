@@ -81,6 +81,7 @@ pub mod rc;
 pub mod sync;
 
 #[cfg(feature = "proc_macro")]
+/// Proc macro for deriving [`Trace`](crate::rc::Trace).
 pub use tracing_rc_derive::Trace;
 
 /// Controls the style of collection carried out.

@@ -98,15 +98,14 @@ fn trace_derive(mut s: synstructure::Structure) -> TokenStream {
         )
     };
 
-    let trace_impl = s.gen_impl(quote! {
-        extern crate tracing_rc;
-
-        gen impl tracing_rc::rc::Trace for @Self {
-            fn visit_children(&self, visitor: &mut tracing_rc::rc::GcVisitor) {
-                match *self { #body }
-            }
-        }
-    });
+    let trace_impl = s.underscore_const(true).unbound_impl(
+        quote!(tracing_rc::rc::Trace),
+        quote! {
+                fn visit_children(&self, visitor: &mut tracing_rc::rc::GcVisitor) {
+                    match *self { #body }
+                }
+        },
+    );
 
     quote! {
         #trace_impl
@@ -117,8 +116,6 @@ fn trace_derive(mut s: synstructure::Structure) -> TokenStream {
 
 synstructure::decl_derive! {
     [Trace, attributes(trace)] =>
-    /// Derives a `Trace` implementation for a type.
-    ///
     /// By default, this will call `Trace::visit_children` on all members of the type.
     /// - If you wish to only visit specific members, you may annotate them with `#[trace]`, and
     ///   only those members will be traced (other fields will be ignored).
@@ -176,8 +173,7 @@ fn simple_impls_trace_default_all() {
             }
         }
         expands to {
-            #[allow(non_upper_case_globals)]
-            const _DERIVE_tracing_rc_rc_Trace_FOR_Simple: () = {
+            const _: () = {
                 extern crate tracing_rc;
 
                 impl tracing_rc::rc::Trace for Simple {
@@ -212,8 +208,7 @@ fn simple_impls_trace_specific_field() {
             }
         }
         expands to {
-            #[allow(non_upper_case_globals)]
-            const _DERIVE_tracing_rc_rc_Trace_FOR_Simple: () = {
+            const _: () = {
                 extern crate tracing_rc;
 
                 impl tracing_rc::rc::Trace for Simple {
@@ -247,8 +242,7 @@ fn simple_impls_trace_specific_field_ignore() {
             }
         }
         expands to {
-            #[allow(non_upper_case_globals)]
-            const _DERIVE_tracing_rc_rc_Trace_FOR_Simple: () = {
+            const _: () = {
                 extern crate tracing_rc;
 
                 impl tracing_rc::rc::Trace for Simple {
@@ -285,8 +279,7 @@ fn enum_impls_trace() {
             }
         }
         expands to {
-            #[allow(non_upper_case_globals)]
-            const _DERIVE_tracing_rc_rc_Trace_FOR_AnEnum: () = {
+            const _: () = {
                 extern crate tracing_rc;
 
                 impl tracing_rc::rc::Trace for AnEnum {
@@ -319,16 +312,10 @@ fn generics_impl_trace_default_all() {
             }
         }
         expands to {
-            #[allow(non_upper_case_globals)]
-            const _DERIVE_tracing_rc_rc_Trace_FOR_HasGenerics: () = {
+            const _: () = {
                 extern crate tracing_rc;
 
-                impl<T: Trace, U: SomeTrait> tracing_rc::rc::Trace for HasGenerics<T, U>
-                where
-                    Gc<T>: tracing_rc::rc::Trace,
-                    T: tracing_rc::rc::Trace,
-                    U: tracing_rc::rc::Trace
-                {
+                impl<T: Trace, U: SomeTrait> tracing_rc::rc::Trace for HasGenerics<T, U> {
                     fn visit_children(&self, visitor: &mut tracing_rc::rc::GcVisitor) {
                         match *self {
                             HasGenerics{
@@ -360,15 +347,10 @@ fn generics_impl_trace_default_specific() {
             }
         }
         expands to {
-            #[allow(non_upper_case_globals)]
-            const _DERIVE_tracing_rc_rc_Trace_FOR_HasGenerics: () = {
+            const _: () = {
                 extern crate tracing_rc;
 
-                impl<T: Trace, U: SomeTrait> tracing_rc::rc::Trace for HasGenerics<T, U>
-                where
-                    Gc<T>: tracing_rc::rc::Trace,
-                    T: tracing_rc::rc::Trace
-                {
+                impl<T: Trace, U: SomeTrait> tracing_rc::rc::Trace for HasGenerics<T, U> {
                     fn visit_children(&self, visitor: &mut tracing_rc::rc::GcVisitor) {
                         match *self {
                             HasGenerics{gc_field: ref __binding_0, ..} => {
@@ -396,15 +378,10 @@ fn generics_impl_trace_default_specific_ignore() {
             }
         }
         expands to {
-            #[allow(non_upper_case_globals)]
-            const _DERIVE_tracing_rc_rc_Trace_FOR_HasGenerics: () = {
+            const _: () = {
                 extern crate tracing_rc;
 
-                impl<T: Trace, U: SomeTrait> tracing_rc::rc::Trace for HasGenerics<T, U>
-                where
-                    Gc<T>: tracing_rc::rc::Trace,
-                    T: tracing_rc::rc::Trace
-                {
+                impl<T: Trace, U: SomeTrait> tracing_rc::rc::Trace for HasGenerics<T, U> {
                     fn visit_children(&self, visitor: &mut tracing_rc::rc::GcVisitor) {
                         match *self {
                             HasGenerics{gc_field: ref __binding_0, ..} => {

@@ -1,21 +1,17 @@
-use tracing_rc::rc::{
-    collect_full,
-    count_roots,
-    Gc,
-    GcVisitor,
+use tracing_rc::{
+    rc::{
+        collect_full,
+        count_roots,
+        Gc,
+    },
     Trace,
 };
 
 #[test]
 fn mono_simple_cycle() {
+    #[derive(Trace)]
     struct Cycle {
         gc: Option<Gc<Cycle>>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor)
-        }
     }
 
     let a = Gc::new(Cycle { gc: None });
@@ -32,14 +28,9 @@ fn mono_simple_cycle() {
 
 #[test]
 fn simple_cycle() {
+    #[derive(Trace)]
     struct Cycle {
         gc: Option<Gc<Cycle>>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor)
-        }
     }
 
     // A.ptr -> Null
@@ -76,16 +67,10 @@ fn simple_cycle() {
 #[test]
 fn parallel_edges() {
     // Improper edge counting could cause a graph with parallel edges to leak nodes.
+    #[derive(Trace)]
     struct Cycle {
         gc: Option<Gc<Cycle>>,
         gc2: Option<Gc<Cycle>>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-            self.gc2.visit_children(visitor);
-        }
     }
 
     let a = Gc::new(Cycle {
@@ -117,15 +102,12 @@ fn parallel_edges() {
 fn live_grandchildren() {
     // Incorrect filtering of the dead candidate list can leave grand-child nodes dead. It won't
     // cause undefined behavior, but it's still bad.
+    #[derive(Trace)]
     struct Cycle {
         gc: Option<Gc<Cycle>>,
-        data: usize,
-    }
 
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-        }
+        #[trace(ignore)]
+        data: usize,
     }
 
     let a = Gc::new(Cycle { gc: None, data: 1 });
@@ -176,6 +158,7 @@ fn live_grandchildren() {
 
 #[test]
 fn dead_cycle_live_outbound() {
+    #[derive(Trace)]
     struct Lives;
 
     impl Lives {
@@ -185,20 +168,10 @@ fn dead_cycle_live_outbound() {
         }
     }
 
-    impl Trace for Lives {
-        fn visit_children(&self, _: &mut GcVisitor) {}
-    }
-
+    #[derive(Trace)]
     struct Cycle {
         gc: Option<Gc<Cycle>>,
         edge: Gc<Lives>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-            self.edge.visit_children(visitor);
-        }
     }
 
     let lives = Gc::new(Lives);
@@ -258,22 +231,13 @@ fn dead_cycle_live_outbound() {
 
 #[test]
 fn dead_cycle_dead_outbound() {
+    #[derive(Trace)]
     struct Dead;
 
-    impl Trace for Dead {
-        fn visit_children(&self, _: &mut GcVisitor) {}
-    }
-
+    #[derive(Trace)]
     struct Cycle {
         gc: Option<Gc<Cycle>>,
         edge: Gc<Dead>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-            visitor.visit_node(&self.edge)
-        }
     }
 
     let dies = Gc::new(Dead);
@@ -305,14 +269,9 @@ fn dead_cycle_dead_outbound() {
 
 #[test]
 fn cycle_live_inbound() {
+    #[derive(Trace)]
     struct Cycle {
         gc: Option<Gc<Cycle>>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-        }
     }
 
     let a = Gc::new(Cycle { gc: None });
@@ -353,14 +312,9 @@ fn cycle_live_inbound() {
 
 #[test]
 fn mono_cycle_live_inbound() {
+    #[derive(Trace)]
     struct Cycle {
         gc: Option<Gc<Cycle>>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-        }
     }
 
     let a = Gc::new(Cycle { gc: None });
@@ -398,16 +352,10 @@ fn mono_cycle_live_inbound() {
 
 #[test]
 fn mono_cycle_live_outbound() {
+    #[derive(Trace)]
     struct Cycle {
         gc: Option<Gc<Cycle>>,
         edge: Gc<u32>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-            visitor.visit_node(&self.edge);
-        }
     }
 
     let live = Gc::new(10);

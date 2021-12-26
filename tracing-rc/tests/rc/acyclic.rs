@@ -3,10 +3,9 @@ use tracing_rc::{
         collect_with_options,
         count_roots,
         Gc,
-        GcVisitor,
-        Trace,
     },
     CollectOptions,
+    Trace,
 };
 
 #[test]
@@ -19,13 +18,9 @@ fn acyclic_single_no_garbage() {
 
 #[test]
 fn acyclic_chain_no_garbage() {
+    #[derive(Trace)]
     struct Int {
         i: Gc<u32>,
-    }
-    impl Trace for Int {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            visitor.visit_node(&self.i);
-        }
     }
 
     let a = Gc::new(Int { i: Gc::new(10) });
@@ -40,13 +35,9 @@ fn acyclic_chain_no_garbage() {
 
 #[test]
 fn acyclic_tree_young_gen_collects() {
+    #[derive(Trace)]
     struct Int {
         i: Gc<u32>,
-    }
-    impl Trace for Int {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            visitor.visit_node(&self.i)
-        }
     }
 
     let a = Gc::new(10u32);

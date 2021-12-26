@@ -1,19 +1,16 @@
-use tracing_rc::rc::{
-    collect_full,
-    Gc,
-    GcVisitor,
+use tracing_rc::{
+    rc::{
+        collect_full,
+        Gc,
+    },
     Trace,
 };
 
+#[derive(Trace)]
 struct GraphNode<T: 'static> {
+    #[trace(ignore)]
     data: T,
     edge: Option<Gc<GraphNode<T>>>,
-}
-
-impl<T> Trace for GraphNode<T> {
-    fn visit_children(&self, visitor: &mut GcVisitor) {
-        self.edge.visit_children(visitor);
-    }
 }
 
 fn main() {
