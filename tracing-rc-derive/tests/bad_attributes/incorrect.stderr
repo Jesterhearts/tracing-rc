@@ -1,0 +1,5 @@
+error: Only `#[trace]` and `#[trace(ignore)]` are supported on fields.
+ --> tests/bad_attributes/incorrect.rs:5:5
+  |
+5 |     #[trace(not_an_arg)]
+  |     ^

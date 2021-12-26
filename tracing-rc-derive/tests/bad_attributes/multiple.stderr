@@ -1,0 +1,5 @@
+error: Cannot specify multiple `#[trace]` attributes.
+ --> tests/bad_attributes/multiple.rs:6:5
+  |
+6 |     #[trace]
+  |     ^

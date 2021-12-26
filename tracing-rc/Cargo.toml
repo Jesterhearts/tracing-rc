@@ -7,6 +7,8 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/Jesterhearts/tracing-rc"
 
 [features]
+default = [ "proc_macro" ]
+proc_macro = [ "tracing-rc-derive" ]
 sync = [ "atomic", "once_cell", "dashmap", "parking_lot" ]
 
 [dependencies]
@@ -27,6 +29,10 @@ optional = true
 
 [dependencies.parking_lot]
 version = '^0.11'
+optional = true
+
+[dependencies.tracing-rc-derive]
+path = "../tracing-rc-derive"
 optional = true
 
 [dev-dependencies]
