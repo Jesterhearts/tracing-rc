@@ -1,4 +1,7 @@
 # tracing-rc
+[![Tests](https://github.com/Jesterhearts/tracing-rc/actions/workflows/badge.svg?event=push)](https://github.com/Jesterhearts/tracing-rc/actions)
+[![Crate](https://img.shields.io/crates/v/tracing-rc.svg)](https://crates.io/crates/tracing-rc)
+
 Cycle collecting reference counted pointers for Rust with a safe, simple api.
 
 The `Gc` type implemented by this crate provides a cycle-aware smart pointer in the style of
