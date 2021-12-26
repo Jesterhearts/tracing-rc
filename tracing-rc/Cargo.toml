@@ -10,8 +10,7 @@ readme = "../README.md"
 [features]
 default = [ "proc_macro" ]
 proc_macro = [ "tracing-rc-derive" ]
-sync = [ "sync_no_proc_macro", "tracing-rc-derive/sync" ]
-sync_no_proc_macro = [ "atomic", "once_cell", "dashmap", "parking_lot" ]
+sync = [ "atomic", "once_cell", "dashmap", "parking_lot", "tracing-rc-derive/sync" ]
 
 [dependencies]
 indexmap = '^1.0'
