@@ -1,5 +1,5 @@
 # tracing-rc
-[![Tests](https://img.shields.io/github/workflow/status/Jesterhearts/tracing-rc/Tests?event=push&style=for-the-badge)](https://github.com/Jesterhearts/tracing-rc/actions)
+[![Tests](https://img.shields.io/github/workflow/status/Jesterhearts/tracing-rc/Tests?event=push&style=for-the-badge&label=Tests&logo=github)](https://github.com/Jesterhearts/tracing-rc/actions)
 [![Crate](https://img.shields.io/crates/v/tracing-rc.svg?style=for-the-badge)](https://crates.io/crates/tracing-rc)
 [![Docs](https://img.shields.io/docsrs/tracing-rc?style=for-the-badge)](https://docs.rs/tracing-rc)
 
