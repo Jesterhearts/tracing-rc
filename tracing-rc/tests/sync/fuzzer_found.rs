@@ -1,21 +1,16 @@
 use std::sync::Mutex;
 
-use tracing_rc::sync::{
-    collect_full,
-    Agc,
-    GcVisitor,
-    Trace,
+use tracing_rc::{
+    sync::{
+        collect_full,
+        Agc,
+    },
+    SyncTrace,
 };
 
-#[derive(Default)]
+#[derive(Default, SyncTrace)]
 struct Cycle {
     neighbors: Mutex<Vec<Agc<Cycle>>>,
-}
-
-impl Trace for Cycle {
-    fn visit_children(&self, visitor: &mut GcVisitor) {
-        self.neighbors.visit_children(visitor);
-    }
 }
 
 #[test]

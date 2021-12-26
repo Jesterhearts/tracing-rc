@@ -1,23 +1,19 @@
 use std::sync::Mutex;
 
-use tracing_rc::sync::{
-    collect_full,
-    count_roots,
-    Agc,
-    GcVisitor,
-    Trace,
+use tracing_rc::{
+    sync::{
+        collect_full,
+        count_roots,
+        Agc,
+    },
+    SyncTrace,
 };
 
 #[test]
 fn mono_simple_cycle() {
+    #[derive(SyncTrace)]
     struct Cycle {
         gc: Mutex<Option<Agc<Cycle>>>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor)
-        }
     }
 
     let a = Agc::new(Cycle {
@@ -34,14 +30,9 @@ fn mono_simple_cycle() {
 
 #[test]
 fn simple_cycle() {
+    #[derive(SyncTrace)]
     struct Cycle {
         gc: Mutex<Option<Agc<Cycle>>>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor)
-        }
     }
 
     // A.ptr -> Null
@@ -80,16 +71,10 @@ fn simple_cycle() {
 #[test]
 fn parallel_edges() {
     // Improper edge counting could cause a graph with parallel edges to leak nodes.
+    #[derive(SyncTrace)]
     struct Cycle {
         gc: Mutex<Option<Agc<Cycle>>>,
         gc2: Mutex<Option<Agc<Cycle>>>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-            self.gc2.visit_children(visitor);
-        }
     }
 
     let a = Agc::new(Cycle {
@@ -121,15 +106,10 @@ fn parallel_edges() {
 fn live_grandchildren() {
     // Incorrect filtering of the dead candidate list can leave grand-child nodes dead. It won't
     // cause undefined behavior, but it's still bad.
+    #[derive(SyncTrace)]
     struct Cycle {
         gc: Mutex<Option<Agc<Cycle>>>,
         data: usize,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-        }
     }
 
     let a = Agc::new(Cycle {
@@ -187,6 +167,7 @@ fn live_grandchildren() {
 
 #[test]
 fn dead_cycle_live_outbound() {
+    #[derive(SyncTrace)]
     struct Lives;
 
     impl Lives {
@@ -196,20 +177,10 @@ fn dead_cycle_live_outbound() {
         }
     }
 
-    impl Trace for Lives {
-        fn visit_children(&self, _: &mut GcVisitor) {}
-    }
-
+    #[derive(SyncTrace)]
     struct Cycle {
         gc: Mutex<Option<Agc<Cycle>>>,
         edge: Agc<Lives>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-            self.edge.visit_children(visitor);
-        }
     }
 
     let lives = Agc::new(Lives);
@@ -269,22 +240,13 @@ fn dead_cycle_live_outbound() {
 
 #[test]
 fn dead_cycle_dead_outbound() {
+    #[derive(SyncTrace)]
     struct Dead;
 
-    impl Trace for Dead {
-        fn visit_children(&self, _: &mut GcVisitor) {}
-    }
-
+    #[derive(SyncTrace)]
     struct Cycle {
         gc: Mutex<Option<Agc<Cycle>>>,
         edge: Agc<Dead>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-            visitor.visit_node(&self.edge)
-        }
     }
 
     let dies = Agc::new(Dead);
@@ -316,14 +278,9 @@ fn dead_cycle_dead_outbound() {
 
 #[test]
 fn cycle_live_inbound() {
+    #[derive(SyncTrace)]
     struct Cycle {
         gc: Mutex<Option<Agc<Cycle>>>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-        }
     }
 
     let a = Agc::new(Cycle {
@@ -377,14 +334,9 @@ fn cycle_live_inbound() {
 
 #[test]
 fn mono_cycle_live_inbound() {
+    #[derive(SyncTrace)]
     struct Cycle {
         gc: Mutex<Option<Agc<Cycle>>>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-        }
     }
 
     let a = Agc::new(Cycle {
@@ -424,16 +376,10 @@ fn mono_cycle_live_inbound() {
 
 #[test]
 fn mono_cycle_live_outbound() {
+    #[derive(SyncTrace)]
     struct Cycle {
         gc: Mutex<Option<Agc<Cycle>>>,
         edge: Agc<u32>,
-    }
-
-    impl Trace for Cycle {
-        fn visit_children(&self, visitor: &mut GcVisitor) {
-            self.gc.visit_children(visitor);
-            visitor.visit_node(&self.edge);
-        }
     }
 
     let live = Agc::new(10);
