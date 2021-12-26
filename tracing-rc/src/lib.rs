@@ -80,6 +80,10 @@ pub mod rc;
 /// An atomic cycle-collecting reference-counted smart pointer.
 pub mod sync;
 
+#[cfg(feature = "proc_macro")]
+/// Proc macro for deriving [`Trace`](crate::rc::Trace).
+pub use tracing_rc_derive::Trace;
+
 /// Controls the style of collection carried out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

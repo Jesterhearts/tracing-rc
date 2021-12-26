@@ -1,19 +1,14 @@
-use tracing_rc::rc::{
-    collect_full,
-    Gc,
-    GcVisitor,
+use tracing_rc::{
+    rc::{
+        collect_full,
+        Gc,
+    },
     Trace,
 };
 
-#[derive(Default)]
+#[derive(Default, Trace)]
 struct Cycle {
     neighbors: Vec<Gc<Cycle>>,
-}
-
-impl Trace for Cycle {
-    fn visit_children(&self, visitor: &mut GcVisitor) {
-        self.neighbors.visit_children(visitor);
-    }
 }
 
 #[test]
