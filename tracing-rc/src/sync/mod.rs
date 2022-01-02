@@ -235,8 +235,8 @@ where
             .ptr
             .status
             .fetch_update(
-                atomic::Ordering::SeqCst,
-                atomic::Ordering::SeqCst,
+                atomic::Ordering::AcqRel,
+                atomic::Ordering::Relaxed,
                 |status| match status {
                     Status::Dead => None,
                     _ => Some(Status::RecentlyDecremented),
