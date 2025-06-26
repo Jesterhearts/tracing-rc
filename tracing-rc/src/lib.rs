@@ -73,6 +73,8 @@
 //! # }
 //! ```
 
+#![cfg_attr(all(doc, ENABLE_DOC_AUTO_CFG), feature(doc_auto_cfg))]
+
 /// A non-sync cycle-collecting reference-counted smart pointer.
 pub mod rc;
 
@@ -80,11 +82,11 @@ pub mod rc;
 /// An atomic cycle-collecting reference-counted smart pointer.
 pub mod sync;
 
-#[cfg(feature = "sync")]
-/// Proc macro for deriving [`sync::Trace`](crate::sync::Trace).
+#[cfg(all(feature = "sync", feature = "proc_macro"))]
+/// Proc macro for deriving [`sync::Trace`].
 pub use tracing_rc_derive::SyncTrace;
 #[cfg(feature = "proc_macro")]
-/// Proc macro for deriving [`Trace`](crate::rc::Trace).
+/// Proc macro for deriving [`Trace`].
 pub use tracing_rc_derive::Trace;
 
 /// Controls the style of collection carried out.

@@ -99,7 +99,7 @@ fn drop_acyclic_value_during_trace() {
 
 #[test]
 fn retain_value_during_trace() {
-    thread_local! { static SMUGGLE: RefCell<Option<Gc<Extra>>> = RefCell::new(None) };
+    thread_local! { static SMUGGLE: RefCell<Option<Gc<Extra>>> = const { RefCell::new(None) } };
 
     #[derive(Debug)]
     struct Extra {

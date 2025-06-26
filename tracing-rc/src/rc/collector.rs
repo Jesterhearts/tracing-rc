@@ -54,7 +54,7 @@ pub struct GcVisitor<'cycle> {
 impl GcVisitor<'_> {
     /// Visit an owned [`Gc`] node.
     pub fn visit_node<T: Trace + 'static>(&mut self, node: &Gc<T>) {
-        (self.visitor)(node.ptr.clone());
+        (self.visitor)(node.ptr.clone() as Rc<_>);
     }
 }
 
@@ -138,7 +138,7 @@ fn collect_old_gen() {
     // Iterate over all nodes reachable from the old gen tracking them in the list of all
     // traced nodes.
     // We iterate over the initial list of nodes here, since all new nodes are added afterwards.
-    for node_ix in (0..connectivity_graph.node_count()).map(GraphIndex::from) {
+    for node_ix in 0..connectivity_graph.node_count() {
         match traced_nodes.get_index(node_ix).unwrap().0.status.get() {
             Status::Live | Status::Dead => {
                 // We'll collect it later if it a new strong reference was created and added

@@ -21,7 +21,7 @@ fn pure_gc_necromancy() {
         }
     }
 
-    thread_local! { static ZOMBIE: RefCell<Option<Gc<Zombie>>> = RefCell::new(None) };
+    thread_local! { static ZOMBIE: RefCell<Option<Gc<Zombie>>> = const { RefCell::new(None) } };
 
     #[derive(Debug)]
     struct Necro {

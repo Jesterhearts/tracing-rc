@@ -1,20 +1,20 @@
 [package]
-name = "tracing-rc-bench"
+name    = "tracing-rc-bench"
 version = "0.1.0"
 publish = false
 edition = "2021"
 
 [dependencies]
-criterion = '^0.3'
+criterion = '^0.6'
 
 [dependencies.tracing-rc]
-path = "../tracing-rc"
+path     = "../tracing-rc"
 features = [ "sync" ]
 
 [[bench]]
-name = "minimal_gc"
+name    = "minimal_gc"
 harness = false
 
 [[bench]]
-name = "cycle_collection"
+name    = "cycle_collection"
 harness = false

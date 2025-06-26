@@ -1,26 +1,26 @@
 [package]
-name = "tracing-rc-derive"
+name        = "tracing-rc-derive"
 description = "Attribute macros for tracing-rc"
-version = "0.1.1"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/Jesterhearts/tracing-rc"
+version     = "0.2.0"
+edition     = "2021"
+license     = "MIT OR Apache-2.0"
+repository  = "https://github.com/Jesterhearts/tracing-rc"
 
 [lib]
 proc-macro = true
 
 [features]
-sync = []
+sync = [  ]
 
 [dependencies]
-proc-macro2 = '^1.0'
-quote = '^1.0'
-syn = '^1.0'
-synstructure = '^0.12'
+proc-macro2  = '^1.0'
+quote        = '^1.0'
+syn          = '^2.0'
+synstructure = '^0.13'
 
 [dev-dependencies]
 trybuild = '^1.0'
 
 [dev-dependencies.tracing-rc]
-path = "../tracing-rc"
+path     = "../tracing-rc"
 features = [ "sync" ]

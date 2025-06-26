@@ -68,7 +68,7 @@ pub struct GcVisitor<'cycle> {
 impl GcVisitor<'_> {
     /// Visit an owned [`Agc`] node.
     pub fn visit_node<T: Trace + 'static>(&mut self, node: &Agc<T>) {
-        (self.visitor)(node.ptr.clone());
+        (self.visitor)(node.ptr.clone() as Arc<_>);
     }
 }
 

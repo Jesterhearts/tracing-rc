@@ -20,7 +20,7 @@ fn filter_default_and_ignored_fields(
         let mut should_keep = true;
 
         for attr in bi.ast().attrs.iter() {
-            should_keep = if attr.path.is_ident(TRACE_FIELD_IDENT) {
+            should_keep = if attr.path().is_ident(TRACE_FIELD_IDENT) {
                 match attr.parse_args() {
                     Err(_) => true,
                     Ok(syn::Meta::Path(path)) => {
@@ -70,7 +70,7 @@ fn filter_specific_fields(specific_fields: &mut synstructure::Structure) -> bool
     let mut has_specific_field = false;
     specific_fields.filter(|bi| {
         if bi.ast().attrs.iter().any(|attr| {
-            attr.path.is_ident(TRACE_FIELD_IDENT) && attr.parse_args::<syn::Meta>().is_err()
+            attr.path().is_ident(TRACE_FIELD_IDENT) && attr.parse_args::<syn::Meta>().is_err()
         }) {
             has_specific_field = true;
             true

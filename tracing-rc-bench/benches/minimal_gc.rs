@@ -1,4 +1,5 @@
 use std::{
+    hint::black_box,
     rc::Rc,
     time::{
         Duration,
@@ -7,7 +8,6 @@ use std::{
 };
 
 use criterion::{
-    black_box,
     criterion_group,
     criterion_main,
     BenchmarkId,

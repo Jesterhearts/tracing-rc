@@ -1,10 +1,14 @@
 use std::{
     mem::ManuallyDrop,
     ops::Deref,
-    sync::Arc,
+    sync::{
+        Arc,
+        Weak,
+    },
 };
 
 use atomic::Atomic;
+use bytemuck::NoUninit;
 use parking_lot::{
     RwLock,
     RwLockReadGuard,
@@ -16,7 +20,7 @@ use parking_lot::{
 ///
 /// 1. The reference count of traced objects. This may change at any time.
 /// 2. The graph of child components. This may be altered any time a reference is access outside the
-/// collector.
+///    collector.
 /// 3. The status of the object. This may change at any time.
 ///
 /// If we decide an object is live, it is pretty safe to mark all of its children live since we
@@ -79,7 +83,8 @@ impl<T: ?Sized> Deref for Ref<'_, T> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, NoUninit)]
+#[repr(i8)]
 enum Status {
     /// The node has had its refcount incremented recently or a mutable/immutable borrow checked
     /// out and is definitely alive.
@@ -206,7 +211,7 @@ where
     }
 
     fn node(&self) -> WeakNode {
-        let inner_ptr = Arc::downgrade(&self.ptr);
+        let inner_ptr = Arc::downgrade(&self.ptr) as Weak<_>;
         WeakNode { inner_ptr }
     }
 }

@@ -1,5 +1,4 @@
 # tracing-rc
-[![Tests](https://img.shields.io/github/workflow/status/Jesterhearts/tracing-rc/Tests?event=push&style=for-the-badge&label=Tests&logo=github)](https://github.com/Jesterhearts/tracing-rc/actions)
 [![Crate](https://img.shields.io/crates/v/tracing-rc.svg?style=for-the-badge)](https://crates.io/crates/tracing-rc)
 [![Docs](https://img.shields.io/docsrs/tracing-rc?style=for-the-badge)](https://docs.rs/tracing-rc)
 
@@ -41,19 +40,19 @@ In order for this crate to be sound and present a safe `Trace` trait, the collec
 cause undefined behavior in any of the scenarios outlined. In order to accomplish this, the
 collector does the following:
 1. Items that are waiting for collection or have been visited during tracing are given an extra
-   strong or weak reference to make sure the memory remains allocated and the data it contains remains valid
-   even if strong references are dropped during traversal.
+   strong or weak reference to make sure the memory remains allocated and the data it contains
+   remains valid even if strong references are dropped during traversal.
 2. Reference counts for traced items are not decremented by the collector during traversal (this is
    a difference from e.g. Bacon-Rajan which originally inspired this crate). The collector instead
    keeps a count of the number of times it reached each pointer through tracing, and then compares
    that count against the strong count for each pointer it traced to decide if the item is dead.
 3. Before dropping any values, the collector marks the object dead. During this process, bugs in the
-   `Trace` implementation may cause the collector to believe a dead value is still alive
-   (causing a leak) or a live value is dead (making it inaccessible, but leaving the gc pointer
-   valid). Safe code is unable to access dead values (it will panic or return Option::None), and
-   cannot restore the live state of a dead object. Values are never temporarily dead, the collector
-   only marks them dead after it has fully determined that it is a valid candidate for collection
-   (all strong refs are from members of its cycle).
+   `Trace` implementation may cause the collector to believe a dead value is still alive (causing a
+   leak) or a live value is dead (making it inaccessible, but leaving the gc pointer valid). Safe
+   code is unable to access dead values (it will panic or return Option::None), and cannot restore
+   the live state of a dead object. Values are never temporarily dead, the collector only marks them
+   dead after it has fully determined that it is a valid candidate for collection (all strong refs
+   are from members of its cycle).
 4. After the full set of traced objects has been marked, the collector begins dropping the inner
    data of objects it believes to be dead, after checking if there are any oustanding borrows
    (immutable or mutable). This drop _does not_ and _can not_ free the memory for the gc pointer,
@@ -64,8 +63,8 @@ collector does the following:
    reference to the `Gc` value, and its memory will be cleaned up. If there are remaining
    references, its memory will be cleaned up when the oustanding references fall out of scope.
  
-There are a decent number number of tests designed to exercise each of these scenarios included, and all
-of these tests pass miri (barring leaks for intentionally misbehaved code).
+There are a decent number number of tests designed to exercise each of these scenarios included, and
+all of these tests pass miri (barring leaks for intentionally misbehaved code).
 
 # Example
 ```rs
